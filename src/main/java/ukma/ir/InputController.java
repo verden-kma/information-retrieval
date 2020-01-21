@@ -4,8 +4,6 @@ import javafx.fxml.FXML;
 import javafx.scene.control.TextField;
 
 public class InputController {
-    private String inputPath;
-    private String outputPath;
 
     @FXML
     private TextField inputField;
@@ -14,13 +12,32 @@ public class InputController {
     private TextField outputField;
 
     @FXML
-    void getInputPath() {
-        inputPath = inputField.getText();
+    String getInputPath() {
+        return inputField.getText();
     }
 
     @FXML
-    void getOutputPath() {
-        outputPath = outputField.getText();
+    String getOutputPath() {
+        return outputField.getText();
     }
 
+    @FXML
+    void buildDictionary() {
+        long startTime = System.nanoTime();
+        Librarian.build(getInputPath());
+//        Librarian.write(getOutputPath());
+//        Librarian.build("C:\\Users\\Andrew\\Desktop\\files");
+//        Librarian.write("C:\\Users\\Andrew\\Desktop");
+//        System.out.println("collectionOnStorageBytes: " + Librarian.collectionOnStorageBytes());
+//        System.out.println("totalWords: " + Librarian.totalWords());
+//        System.out.println("SizeTerms: " + Librarian.getSizeTerms());
+
+        long endTime = System.nanoTime();
+        System.out.println("single time: " + (endTime - startTime) / 1e9);
+
+        ProLibrarian librarian = ProLibrarian.getInstance("C:\\Users\\Andrew\\Desktop\\OurData", "C:\\Users\\Andrew\\Desktop");
+        librarian.makeDictionary();
+
+        System.out.println(librarian.getDictionary().size());
+    }
 }
