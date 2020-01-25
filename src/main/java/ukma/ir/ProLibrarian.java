@@ -1,5 +1,8 @@
 package ukma.ir;
 
+import com.google.common.collect.BiMap;
+import com.google.common.collect.HashBiMap;
+
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -11,17 +14,18 @@ import java.util.TreeSet;
 import java.util.concurrent.*;
 import java.util.stream.Stream;
 
-public class ProLibrarian {
+public class ProLibrarian implements Serializable {
     private static ProLibrarian instance;
+    private volatile BiMap<String, Integer> docId = HashBiMap.create();
+
+    private transient String readPath, writePath;
+
+    private transient final Object lock = new Object();
+    private TreeMap<String, TreeSet<Integer>> dictionary;
+    private transient ExecutorService workers; // refactor so that finished Futures are passed first
 
     private ProLibrarian() {
     }
-
-    private String readPath, writePath;
-
-    private final Object lock = new Object();
-    private TreeMap<String, TreeSet<String>> dictionary;
-    private ExecutorService workers;
 
     // there is no need to have multiple instances of this class as it is not supposed to be stored in collections
     // creating multiple instances and running them simultaneously may use more threads than expected
@@ -38,25 +42,30 @@ public class ProLibrarian {
     public void makeDictionary() {
         long startTime = System.nanoTime();
         dictionary = new TreeMap<>();
-        workers = Executors.newFixedThreadPool(4);
+        workers = Executors.newFixedThreadPool(1);
 
         try (Stream<Path> files = Files.walk(Paths.get(readPath))) {
             files.filter(Files::isRegularFile)
-                    .map(path -> workers.submit(new FileProcessor(path)))
+                    .map(Path::toFile)
+                    .map(doc -> {
+                        docId.put(doc.getName(), docId.size());
+                        return doc;
+                    })
+                    .map(doc -> workers.submit(new FileProcessor(doc)))
                     .forEach(instance::merge);
         } catch (IOException e) {
             e.printStackTrace();
         }
-        workers.shutdown();
+        workers.shutdown(); // fix concurrency
         long endTime = System.nanoTime();
         System.out.println("multi time: " + (endTime - startTime) / 1e9);
     }
 
-    private void merge(Future<TreeMap<String, TreeSet<String>>> futureMicroMap) {
+    private void merge(Future<TreeMap<String, TreeSet<Integer>>> futureMicroMap) {
         try {
-            TreeMap<String, TreeSet<String>> microMap = futureMicroMap.get();
+            TreeMap<String, TreeSet<Integer>> microMap = futureMicroMap.get();
             synchronized (lock) {
-                for (Map.Entry<String, TreeSet<String>> entry : microMap.entrySet()) {
+                for (Map.Entry<String, TreeSet<Integer>> entry : microMap.entrySet()) {
                     dictionary.merge(entry.getKey(), entry.getValue(),
                             (oldVal, newVal) -> {
                                 oldVal.addAll(newVal);
@@ -70,25 +79,26 @@ public class ProLibrarian {
         System.out.println("merged");
     }
 
-    private static class FileProcessor implements Callable<TreeMap<String, TreeSet<String>>> {
-        private TreeMap<String, TreeSet<String>> map = new TreeMap<>();
+    private class FileProcessor implements Callable<TreeMap<String, TreeSet<Integer>>> {
+        private TreeMap<String, TreeSet<Integer>> map = new TreeMap<>();
 
-        private FileProcessor(Path path) {
-            final String fileName = path.toFile().getName();
-            try (BufferedReader br = new BufferedReader(new FileReader(path.toFile()))) {
+        private FileProcessor(File file) {
+            final String fileName = file.getName();
+            try (BufferedReader br = new BufferedReader(new FileReader(file))) {
                 br.lines()
                         .map(line -> line.split("\\s"))
                         .flatMap(Arrays::stream)
-                        .map(token -> token.replaceAll("(<\\w+>)|[.,!?:]+", ""))
+                        .map(token -> token.replaceAll("(\\W+)|(<\\w+(\\\\)?>)", ""))
                         .filter(token -> !token.isEmpty())
                         .map(String::toLowerCase)
                         .forEach(word -> {
+                            // no need for synchronization as all threads only read from docId
                             if (map.get(word) == null) {
-                                TreeSet<String> posting = new TreeSet<>();
-                                posting.add(fileName);
+                                TreeSet<Integer> posting = new TreeSet<>();
+                                posting.add(docId.get(fileName));
                                 map.put(word, posting);
                             } else {
-                                map.get(word).add(fileName);
+                                map.get(word).add(docId.get(fileName));
                             }
                         });
             } catch (IOException e) {
@@ -97,7 +107,7 @@ public class ProLibrarian {
         }
 
         @Override
-        public TreeMap<String, TreeSet<String>> call() {
+        public TreeMap<String, TreeSet<Integer>> call() {
             return map;
         }
     }
@@ -119,7 +129,7 @@ public class ProLibrarian {
 
     public boolean loadDictionary(String dictionaryPath) {
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(dictionaryPath))) {
-            dictionary = (TreeMap<String, TreeSet<String>>) ois.readObject();
+            dictionary = (TreeMap<String, TreeSet<Integer>>) ois.readObject();
         } catch (IOException e) {
             e.printStackTrace();
             System.out.println("IO related issues");
@@ -132,9 +142,16 @@ public class ProLibrarian {
         return true;
     }
 
-    public TreeMap<String, TreeSet> getDictionary() {
-        if (dictionary == null) throw new IllegalArgumentException ("no dictionary built yet");
-        return new TreeMap<>(dictionary);
+    public TreeMap<String, TreeSet<String>> getDictionary() {
+        if (dictionary == null) throw new IllegalArgumentException("no dictionary built yet");
+        TreeMap<String, TreeSet<String>> result = new TreeMap<>();
+        for (Map.Entry<String, TreeSet<Integer>> entry : dictionary.entrySet()) {
+            TreeSet<String> restoredPosting = new TreeSet<>();
+            for (Integer id : entry.getValue())
+                restoredPosting.add(docId.inverse().get(id));
+            result.put(entry.getKey(), restoredPosting);
+        }
+        return result;
     }
 
     public String getReadPath() {

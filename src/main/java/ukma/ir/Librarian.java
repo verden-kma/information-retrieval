@@ -10,7 +10,11 @@ import java.util.stream.Stream;
 
 public class Librarian {
 
-    private static ArrayList<ArrayList<String>> dictionary; // num of terms
+    public static ArrayList<ArrayList<String>> getDictionary() {
+        return dictionary;
+    }
+
+    private static ArrayList<ArrayList<String>> dictionary;
     private static int words; // num of words with duplicates
     private static long collectionSize; // on disk
 
