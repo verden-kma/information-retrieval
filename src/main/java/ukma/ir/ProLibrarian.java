@@ -11,18 +11,22 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.concurrent.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorCompletionService;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Stream;
 
-public class ProLibrarian implements Serializable {
+public class ProLibrarian {
     private static ProLibrarian instance;
+    private int freeID;
     private volatile BiMap<String, Integer> docId = HashBiMap.create();
 
-    private transient String readPath, writePath;
+    private String readPath, writePath;
 
-    private transient final Object lock = new Object();
+    // private transient final Object lock = new Object();
     private TreeMap<String, TreeSet<Integer>> dictionary;
-    private transient ExecutorService workers; // refactor so that finished Futures are passed first
+    private ExecutorCompletionService<TreeMap<String, TreeSet<Integer>>> workers;
 
     private ProLibrarian() {
     }
@@ -42,47 +46,54 @@ public class ProLibrarian implements Serializable {
     public void makeDictionary() {
         long startTime = System.nanoTime();
         dictionary = new TreeMap<>();
-        workers = Executors.newFixedThreadPool(1);
+        ExecutorService es = Executors.newFixedThreadPool(4);
+        workers = new ExecutorCompletionService<>(es);
 
         try (Stream<Path> files = Files.walk(Paths.get(readPath))) {
-            files.filter(Files::isRegularFile)
+            long n = files.filter(Files::isRegularFile)
                     .map(Path::toFile)
                     .map(doc -> {
-                        docId.put(doc.getName(), docId.size());
+                        docId.put(doc.getName(), freeID++);
                         return doc;
                     })
-                    .map(doc -> workers.submit(new FileProcessor(doc)))
-                    .forEach(instance::merge);
-        } catch (IOException e) {
+                    .map(FileProcessor::new)
+                    .map(workers::submit)
+                    .count();
+
+            for (long i = 0; i < n; i++) {
+                merge(workers.take().get());
+            }
+
+        } catch (Exception e) {
             e.printStackTrace();
         }
-        workers.shutdown(); // fix concurrency
+        es.shutdown();
         long endTime = System.nanoTime();
         System.out.println("multi time: " + (endTime - startTime) / 1e9);
     }
 
-    private void merge(Future<TreeMap<String, TreeSet<Integer>>> futureMicroMap) {
-        try {
-            TreeMap<String, TreeSet<Integer>> microMap = futureMicroMap.get();
-            synchronized (lock) {
-                for (Map.Entry<String, TreeSet<Integer>> entry : microMap.entrySet()) {
-                    dictionary.merge(entry.getKey(), entry.getValue(),
-                            (oldVal, newVal) -> {
-                                oldVal.addAll(newVal);
-                                return oldVal;
-                            });
-                }
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            e.printStackTrace();
+
+    private void merge(TreeMap<String, TreeSet<Integer>> microMap) {
+        for (Map.Entry<String, TreeSet<Integer>> entry : microMap.entrySet()) {
+            dictionary.merge(entry.getKey(), entry.getValue(),
+                    (oldVal, newVal) -> {
+                        oldVal.addAll(newVal);
+                        return oldVal;
+                    });
         }
-        System.out.println("merged");
     }
 
     private class FileProcessor implements Callable<TreeMap<String, TreeSet<Integer>>> {
+        private final File file;
         private TreeMap<String, TreeSet<Integer>> map = new TreeMap<>();
 
-        private FileProcessor(File file) {
+        FileProcessor(File file) {
+            this.file = file;
+        }
+
+        @Override
+        public TreeMap<String, TreeSet<Integer>> call() {
+
             final String fileName = file.getName();
             try (BufferedReader br = new BufferedReader(new FileReader(file))) {
                 br.lines()
@@ -104,10 +115,6 @@ public class ProLibrarian implements Serializable {
             } catch (IOException e) {
                 e.printStackTrace();
             }
-        }
-
-        @Override
-        public TreeMap<String, TreeSet<Integer>> call() {
             return map;
         }
     }
