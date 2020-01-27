@@ -2,27 +2,51 @@ package ukma.ir;
 
 import javafx.application.Application;
 import javafx.fxml.FXMLLoader;
-import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
+import ukma.ir.Controllers.MainController;
+import ukma.ir.Controllers.ResultController;
 
 
-public class App extends Application
-{
-    public App() {}
 
-    public static void main( String[] args )
-    {
+public class App extends Application {
+    private Scene mainScene, resultScene;
+    private Stage primary;
+
+    public static void main(String[] args) {
         launch(args);
     }
 
     @Override
     public void start(Stage primaryStage) throws Exception {
-        Parent root = FXMLLoader.load(getClass().getResource("/fxml/main-frame.fxml"));
+        primary = primaryStage;
 
-        Scene scene = new Scene(root);
-        primaryStage.setScene(scene);
-        primaryStage.setTitle("Sample Application");
+        FXMLLoader mainLoader = new FXMLLoader();
+        mainLoader.setLocation(getClass().getResource("/fxml/main-frame.fxml"));
+        mainScene = new Scene(mainLoader.load());
+        MainController mc = mainLoader.getController();
+        mc.takeEntry(this);
+
+        FXMLLoader resultLoader = new FXMLLoader();
+        resultLoader.setLocation(getClass().getResource("/fxml/result-frame.fxml"));
+        resultScene = new Scene(resultLoader.load());
+        ResultController rc = resultLoader.getController();
+        rc.takeEntry(this);
+
+        primaryStage.setScene(mainScene);
+        primaryStage.setTitle("Boolean query");
+
+        // bind list of answers from main controller to the list view in
+        rc.bindList(mc.getModel());
+        ProLibrarian.getInstance().buildInvertedIndex();
         primaryStage.show();
+    }
+
+    public void showMain() {
+        primary.setScene(mainScene);
+    }
+
+    public void showResult() {
+        primary.setScene(resultScene);
     }
 }
