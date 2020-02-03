@@ -7,8 +7,6 @@ import javafx.stage.Stage;
 import ukma.ir.Controllers.MainController;
 import ukma.ir.Controllers.ResultController;
 
-
-
 public class App extends Application {
     private Scene mainScene, resultScene;
     private Stage primary;
