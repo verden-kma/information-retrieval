@@ -2,46 +2,44 @@ package ukma.ir;
 
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
+import com.sun.istack.internal.NotNull;
+import edu.stanford.nlp.process.Morphology;
 import edu.stanford.nlp.simple.Sentence;
 
+import javax.annotation.Nonnull;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorCompletionService;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.CountDownLatch;
 import java.util.stream.Stream;
+
+import static java.lang.Thread.sleep;
 
 public class ProLibrarian {
     // too much time waiting for:
     // 1. too many threads -> free memory to return Future,
     // 2. too few -> next Future to merge it
-    private static final int THREADS = 2;
-    private static final Path LIBRARY = Paths.get("infoSearch/data/library/custom");
-    private static final String TEMP_PARTICLES = "infoSearch/data/dictionary/dp%d.txt";
-    private static final String INDEX_FLECKS = "infoSearch/data/dictionary/indexFleck_%d.txt";
-    // restricts the amount of memory Future`s take
-    private static final double MEMORY_LIMIT = 0.6 * Runtime.getRuntime().maxMemory();
+    private static final int WORKERS = 1;
+    private static final Path LIBRARY = Paths.get("data/library/custom");
+    private static final String TEMP_PARTICLES = "data/dictionary/dp%d.txt";
+    private static final String INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
+    private static final long WORKERS_MEMORY_LIMIT = Math.round(Runtime.getRuntime().maxMemory() * 0.5);
+    private static final long MAX_MEMORY_LOAD = Math.round(Runtime.getRuntime().maxMemory() * 0.7);
 
-    private static ProLibrarian instance;
-    private int freeID;
+    private final CountDownLatch completion = new CountDownLatch(WORKERS);
+
+    private static final ProLibrarian instance = new ProLibrarian();
+
     private int numStoredDictionaries;
     private int numFlecks;
+
+    private int freeID;
     private volatile BiMap<String, Integer> docId = HashBiMap.create();
 
-    private final Object lock = new Object();
-    private volatile boolean lackMemory;
-    private volatile AtomicLong currentlyRead = new AtomicLong();
-
-
-    private volatile AtomicInteger numDoneFutures = new AtomicInteger();
-
-    private TreeMap<String, ArrayList<Integer>> dictionary;
+    // TODO: use ternary search tree
+    private TreeMap<String, Set<Integer>> dictionary;
 
     private ProLibrarian() {
     }
@@ -50,140 +48,112 @@ public class ProLibrarian {
     // creating multiple instances and running them simultaneously may use more threads than expected
     // it can be refactored to take an array of strings if the files are spread across multiple files
     public static ProLibrarian getInstance() {
-        if (instance == null)
-            instance = new ProLibrarian();
         return instance;
     }
 
     public void buildInvertedIndex() {
         long startTime = System.nanoTime();
         dictionary = new TreeMap<>();
-        ExecutorService es = Executors.newFixedThreadPool(THREADS); // , new ThreadFactoryBuilder().setNameFormat("executor-thread-%d").build()
-        ExecutorCompletionService<OutEntry<Integer, String[]>> workers = new ExecutorCompletionService<>(es);
 
         try (Stream<Path> files = Files.walk(LIBRARY)) {
-            long n = files.filter(Files::isRegularFile)
+            File[] documents = files.filter(Files::isRegularFile)
                     .map(Path::toFile)
                     .peek(doc -> docId.put(doc.getName(), freeID++))
-                    .map(FileProcessor::new)
-                    .map(workers::submit)
-                    .count();
+                    .toArray(File[]::new);
 
-            //add overlaps every sqrt(n)
-            for (long i = 0; i < n; i++)
-                merge(workers.take().get());
+            for (int i = 0; i < WORKERS; i++) {
+                int from = (int) Math.round((double)documents.length / WORKERS * i);
+                int to = (int) Math.round((double)documents.length / WORKERS * (i + 1));
+                showMemory();
+                new Thread(new FileProcessor(Arrays.copyOfRange(documents, from, to))).start();
+            }
+            completion.await();
 //            System.out.println("START MERGING PARTICLES");
-//            mergeParticles();
+            mergeParticles();
 //            System.out.println("Merged Particles");
             System.out.println("FINISH");
             System.out.println(showMemory());
         } catch (Exception e) {
             e.printStackTrace();
         }
-        es.shutdown();
         long endTime = System.nanoTime();
         System.out.println("multi time: " + (endTime - startTime) / 1e9);
     }
 
     static int debugCounter = 1;
 
-    private class FileProcessor implements Callable<OutEntry<Integer, String[]>> {
-        private final File file;
+    private class FileProcessor implements Runnable {
+        // random is used to prevent situation when all threads want to merge simultaneously
+        private final long WORKER_MEMORY = Math.round(WORKERS_MEMORY_LIMIT * (0.95 + Math.random()/10));
+        private final File[] files;
 
-        FileProcessor(File file) {
-            this.file = file;
+        FileProcessor(File[] docs) {
+            this.files = docs;
+            System.out.println("Worker memory: " + WORKER_MEMORY/1024/1024 + " MB");
         }
 
         @Override
-        public OutEntry<Integer, String[]> call() {
-            Runtime rt = Runtime.getRuntime();
-            synchronized (lock) {
-                if (!lackMemory) lackMemory = rt.maxMemory() - rt.freeMemory() + file.length()*2 + currentlyRead.get() > MEMORY_LIMIT;
-                if (lackMemory) System.out.println("MEMORY LIMIT");
-                while (lackMemory) {
-                    try {
-                        System.out.println("start WAIT");
-                        lock.wait();
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
+        public void run() {
+            System.out.println("start run");
+            Morphology morph = new Morphology();
+            TreeSet<String> vocabulary;
+            for (File docFile : files) {
+                vocabulary = new TreeSet<>();
+                int docID = docId.get(docFile.getName());
+                try (BufferedReader br = new BufferedReader(new FileReader(docFile))) {
+                    String nextLine = br.readLine();
+                    while (nextLine != null) {
+                        for (String token : nextLine.split("\\s")) {
+                            token = morph.stem(token.toLowerCase().replaceAll("\\W", ""));
+                            if (token != null) vocabulary.add(token);
+                        }
+                        Runtime rt = Runtime.getRuntime();
+                        if (rt.maxMemory() - rt.freeMemory() > WORKER_MEMORY) {
+                            merge(new OutEntry<>(docID, vocabulary.toArray(new String[0])));
+                            vocabulary = new TreeSet<>();
+                        }
+                        nextLine = br.readLine();
                     }
+                    // send to merge after processing anyway
+                    merge(new OutEntry<>(docId.get(docFile.getName()), vocabulary.toArray(new String[0])));
+                } catch (IOException e) {
+                    e.printStackTrace();
                 }
             }
-            currentlyRead.set(file.length());
-            StringBuilder fs = new StringBuilder();
-            try (BufferedReader br = new BufferedReader(new FileReader(file))) {
-                br.lines().forEach(x -> {
-                    fs.append(x);
-                    fs.append('\n');
-                });
-                //expensive lemmatization for production
-//                Document doc = new Document(fs.toString());
-//                String[] lemmas = doc.sentences().stream()
-//                        .map(Sentence::lemmas)
-//                        .flatMap(List::stream)
-//                        .distinct()
-//                        .toArray(String[]::new);
-                String[] lemmas = Arrays.stream(fs.toString().split("\\s+"))
-                        .filter(x -> !x.matches("\\s+|\\W+|(</?\\w>)+"))
-                        .map(s -> s.replaceAll("\\W", ""))
-                        .map(String::toLowerCase)
-                        .distinct()
-                        .toArray(String[]::new);
-
-                System.out.println("file processed: " + debugCounter++);
-                showMemory();
-
-                currentlyRead.set(currentlyRead.get() - file.length());
-                numDoneFutures.incrementAndGet();
-                return new OutEntry<>(docId.get(file.getName()), lemmas);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-            return null;
+            System.out.println("Out of processing thread!");
+            completion.countDown();
         }
     }
 
 
     static int mergeDebug = 1;
+
     /**
-     * merges Future values into a dictionary piece
+     * merges small local dictionaries into a big global
      *
-     * @param microMap - particle of dictionary built from a single file
+     * @param microMap - particle of dictionary built during a processing period
      */
-    private void merge(OutEntry<Integer, String[]> microMap) {
-        // TODO: handle situation when microMap is stored 2 times: as it is and as lemmas in ArrayLists in dictionary
-        for (String lemma : microMap.getValue()) {
-            ArrayList<Integer> posting = dictionary.get(lemma);
+    private synchronized void merge(OutEntry<Integer, String[]> microMap) {
+        System.out.println("MERGE");
+        for (String term : microMap.getValue()) {
+            Set<Integer> posting = dictionary.get(term);
             if (posting != null) posting.add(microMap.getKey());
             else {
-                posting = new ArrayList<>();
+                posting = new TreeSet<>();
                 posting.add(microMap.getKey());
-                dictionary.put(lemma, posting);
+                dictionary.put(term, posting);
             }
         }
-        /* debug code */
-        if (lackMemory)
-            System.out.println("Lack merge " + mergeDebug++);
-        else
-            System.out.println("Merge " + mergeDebug++);
-        /*end debug code*/
 
         Runtime rt = Runtime.getRuntime();
-        // I/O tasks (and lemmatization) performed by workers take more time than merge operation,\
-        // so starting them when there is only 1 left is too late to avoid waiting of current 'merger' thread
-        // the idea is to make workers process as many files as they can before memory runs out
-        // and to make them wait for as long as there is job for merger in order to minimize time for synchronization
-        // at this point program is supposed to work at high but stable memory usage, when all nearly Futures processed
-        // into a dictionary, save the dictionary, free a large part of the memory and allow workers to proceed
-        if (numDoneFutures.decrementAndGet() <= 2 && lackMemory) {
+        if (rt.maxMemory() - rt.freeMemory() > MAX_MEMORY_LOAD) {
+            System.out.println("Max memory: " + rt.maxMemory()/1024/1024 + " MB");
+            System.out.println("Free: " + rt.freeMemory()/1024/1024 + " MB");
+            System.out.println("Diff: " + (rt.maxMemory() - rt.freeMemory())/1024/1024 + " MB");
+            System.out.println("Limit: " + WORKERS_MEMORY_LIMIT/1024/1024 + " MB");
             System.out.println("need to save");
             saveParticle();
-            synchronized (lock) {
-                lackMemory = false;
-                lock.notifyAll();
-            }
         }
-        System.out.println("Reminder after merge: " + numDoneFutures.get());
     }
 
     private String showMemory() {
@@ -195,7 +165,7 @@ public class ProLibrarian {
         System.out.println("start to save");
         String pathName = String.format(TEMP_PARTICLES, numStoredDictionaries++);
         try (BufferedWriter bw = new BufferedWriter(new FileWriter(new File(pathName)))) {
-            for (Map.Entry<String, ArrayList<Integer>> entry : dictionary.entrySet()) {
+            for (Map.Entry<String, Set<Integer>> entry : dictionary.entrySet()) {
                 bw.write(entry.getKey() + " : " + entry.getValue().toString());
                 bw.newLine();
             }
@@ -203,10 +173,10 @@ public class ProLibrarian {
             e.printStackTrace();
         }
         dictionary = new TreeMap<>();
+        System.gc();
         System.out.println("Particle saved! -> " + showMemory());
     }
 
-    // TODO: test
     private void mergeParticles() throws IOException {
         saveParticle();
 // open reader for each particle and maintain priority queue for each particle on disk
@@ -225,87 +195,91 @@ public class ProLibrarian {
         BufferedWriter bw = new BufferedWriter(new FileWriter(new File(pathName)));
 
         while (true) {
-            InEntry nextEntry = entries.poll();
-            if (nextEntry == null) {
+            if (entries.isEmpty()) {
                 bw.flush();
                 bw.close();
                 break;
             }
 
+            InEntry nextEntry = entries.poll();
             StringBuilder posting = new StringBuilder();
             appendPosting(entries, readers, nextEntry, posting);
-// check '!entries.isEmpty()' eliminates NullPointerException
+            // check '!entries.isEmpty()' eliminates NullPointerException
             // find and process current term in all files
-            while (!entries.isEmpty()
-                    && nextEntry.getKey().equals(entries.peek().getKey())) {
-                InEntry mergeEntry = entries.poll();
-                appendPosting(entries, readers, mergeEntry, posting);
-            }
-            bw.write(nextEntry.getKey() + " : " + posting.toString().replaceAll("[\\[\\]]", ""));
+            while (!entries.isEmpty() && nextEntry.getTerm().equals(entries.peek().getTerm()))
+                appendPosting(entries, readers, entries.poll(), posting);
+
+            bw.write(nextEntry.getTerm() + " : " + posting.toString().replaceAll("[\\[\\]]", " ").trim());
             bw.newLine();
+            System.out.println("write index");
             Runtime rt = Runtime.getRuntime();
-            if (rt.freeMemory() < MEMORY_LIMIT) {
+            if (rt.maxMemory() - rt.freeMemory() > MAX_MEMORY_LOAD) {
                 bw.flush();
                 bw.close();
                 pathName = String.format(INDEX_FLECKS, numFlecks++);
                 bw = new BufferedWriter(new FileWriter(new File(pathName)));
+                System.out.println("new index file");
             }
         }
     }
 
     private void appendPosting(PriorityQueue<InEntry> entries, BufferedReader[] readers,
                                InEntry nextEntry, StringBuilder posting) throws IOException {
-        posting.append(nextEntry.getValue());
+        posting.append(nextEntry.getPostings());
         String newLine = readers[nextEntry.getIndex()].readLine();
-        if (newLine == null) readers[nextEntry.getIndex()].close();
+        if (newLine == null) {
+            readers[nextEntry.getIndex()].close(); //delete file
+            Files.delete(Paths.get(String.format(TEMP_PARTICLES, nextEntry.getIndex())));
+        }
         else entries.add(new InEntry(nextEntry.getIndex(), newLine));
     }
 
-    /**
-     * NEEDS EDITING!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-     *
-     * @param q - query to be processed
-     * @return list of documents that match a given query
-     */
-    public List<String> processQuery(String q) {
-        Set<Integer> reminders = new TreeSet<>();
-        Arrays.stream(q.split("OR"))
-                .map(union -> union.split("AND"))
-                .forEach(unionParticle -> {
-                    List<String> includeTerms = new ArrayList<>();
-                    List<String> excludeTerms = new ArrayList<>();
-                    for (String token : unionParticle)
-                        if (token.startsWith("NOT"))
-                            excludeTerms.add(new Sentence(token.substring(3)).lemma(0));
-                        else includeTerms.add(new Sentence(token).lemma(0));
-
-                    // if there are terms to include and one of these terms is in dictionary (in this case - 0th),
-                    // i.e. input is not empty
-                    // then set posting for this term as a base for further intersections
-                    // else do no intersection as the result is empty if any entry is empty
-                    Set<Integer> inTerms = new TreeSet<>();
-                    if (!includeTerms.isEmpty() && dictionary.containsKey(includeTerms.get(0))) {
-                        inTerms.addAll(dictionary.get(includeTerms.get(0))); // set base
-                        includeTerms.forEach(term -> {
-                            ArrayList<Integer> posting = dictionary.get(term);
-                            if (posting != null) inTerms.retainAll(posting); // intersect
-                        });
-                    }
-
-                    Set<Integer> exTerms = new TreeSet<>();
-                    for (String term : excludeTerms) {
-                        ArrayList<Integer> posting = dictionary.get(term);
-                        if (posting != null) exTerms.addAll(posting);
-                    }
-
-                    inTerms.removeAll(exTerms);
-                    reminders.addAll(inTerms);
-                });
-
-        List<String> result = new ArrayList<>(reminders.size());
-        reminders.forEach(id -> result.add(docId.inverse().get(id)));
-        return result;
-    }
+//    /**
+//     * NEEDS EDITING!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+//     *
+//     * @param q - query to be processed
+//     * @return list of documents that match a given query
+//     */
+//    public List<String> processQuery(String q) {
+//        //TODO: add overlaps every sqrt(n)
+//        Set<Integer> reminders = new TreeSet<>();
+//        Arrays.stream(q.split("OR"))
+//                .map(union -> union.split("AND"))
+//                .forEach(unionParticle -> {
+//                    List<String> includeTerms = new ArrayList<>();
+//                    List<String> excludeTerms = new ArrayList<>();
+//                    for (String token : unionParticle)
+//                        if (token.startsWith("NOT"))
+//                            excludeTerms.add(new Sentence(token.substring(3)).lemma(0));
+//                        else includeTerms.add(new Sentence(token).lemma(0));
+//
+//                    // if there are terms to include and one of these terms is in dictionary (in this case - 0th),
+//                    // i.e. input is not empty
+//                    // then set posting for this term as a base for further intersections
+//                    // else do no intersection as the result is empty if any entry is empty
+//                    Set<Integer> inTerms = new TreeSet<>();
+//                    if (!includeTerms.isEmpty() && dictionary.containsKey(includeTerms.get(0))) {
+//                        inTerms.addAll(dictionary.get(includeTerms.get(0))); // set base
+//                        includeTerms.forEach(term -> {
+//                            ArrayList<Integer> posting = dictionary.get(term);
+//                            if (posting != null) inTerms.retainAll(posting); // intersect
+//                        });
+//                    }
+//
+//                    Set<Integer> exTerms = new TreeSet<>();
+//                    for (String term : excludeTerms) {
+//                        ArrayList<Integer> posting = dictionary.get(term);
+//                        if (posting != null) exTerms.addAll(posting);
+//                    }
+//
+//                    inTerms.removeAll(exTerms);
+//                    reminders.addAll(inTerms);
+//                });
+//
+//        List<String> result = new ArrayList<>(reminders.size());
+//        reminders.forEach(id -> result.add(docId.inverse().get(id)));
+//        return result;
+//    }
 
     // generics used to remind about types and add flexibility to refactor
     private class OutEntry<K, V> {
@@ -328,32 +302,32 @@ public class ProLibrarian {
     }
 
     class InEntry implements Comparable<InEntry> {
-        private int index;
-        private String key;
-        private String value;
+        private int index; // index of particle file
+        private String term; // term
+        private String postings; // postings
 
         public InEntry(int index, String value) {
             this.index = index;
             int separator = value.indexOf(" : ");
-            this.key = value.substring(0, separator);
-            this.value = value.substring(separator + 3);
+            term = value.substring(0, separator);
+            postings = value.substring(separator + 3);
         }
 
         @Override
         public int compareTo(InEntry entry) {
-            return key.compareTo(entry.key);
+            return term.compareTo(entry.term);
         }
 
         public int getIndex() {
             return index;
         }
 
-        public String getKey() {
-            return key;
+        public String getTerm() {
+            return term;
         }
 
-        public String getValue() {
-            return value;
+        public String getPostings() {
+            return postings;
         }
     }
 

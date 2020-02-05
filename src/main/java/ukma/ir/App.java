@@ -18,7 +18,6 @@ public class App extends Application {
     @Override
     public void start(Stage primaryStage) throws Exception {
         primary = primaryStage;
-
         FXMLLoader mainLoader = new FXMLLoader();
         mainLoader.setLocation(getClass().getResource("/fxml/main-frame.fxml"));
         mainScene = new Scene(mainLoader.load());
