@@ -35,7 +35,7 @@ public class App extends Application {
 
         // bind list of answers from main controller to the list view in
         rc.bindList(mc.getModel());
-        ProLibrarian.getInstance().buildInvertedIndex();
+        IndexServer.getInstance().buildInvertedIndex(); // debug
         primaryStage.show();
     }
 

@@ -17,7 +17,7 @@ public class MainController {
     void search() {
         //TODO: make decomposition and change API of accessing the index and processing queries
 //        try (BufferedWriter bw = new BufferedWriter(new FileWriter("output.txt"))) {
-//            ProLibrarian librarian = ProLibrarian.getInstance();
+//            IndexServer librarian = IndexServer.getInstance();
 //            queryResponse.clear();
 //            queryResponse.addAll(librarian.processQuery(inputField.getText()));
 //            entry.showResult();
