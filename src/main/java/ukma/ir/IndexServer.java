@@ -4,7 +4,6 @@ import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import com.sun.istack.internal.NotNull;
 import edu.stanford.nlp.process.Morphology;
-import edu.stanford.nlp.tagger.maxent.MaxentTagger;
 
 import javax.annotation.Nullable;
 import java.io.*;
@@ -19,24 +18,37 @@ import java.util.stream.Stream;
 public class IndexServer {
     private static final int WORKERS = 3;
     private static final String TEMP_PARTICLES = "data/dictionary/dp%d.txt";
+    private static final String TEMP_PHRASE_PARTICLES = "data/dictionary/phdp%d.txt";
     private static final String INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
+    private static final String PHRASE_INDEX_FLECKS = "data/dictionary/phraseIndexFleck_%d.txt";
     private static final long WORKERS_MEMORY_LIMIT = Math.round(Runtime.getRuntime().maxMemory() * 0.5);
     private static final long MAX_MEMORY_LOAD = Math.round(Runtime.getRuntime().maxMemory() * 0.7);
     private static final String DP_SEPARATOR = " : "; // DOC_POSTING_SEPARATOR
 
     private Path LIBRARY = Paths.get("G:\\project\\library\\custom");
-    private static final IndexServer instance = new IndexServer();
+    private static final IndexServer INSTANCE = new IndexServer();
     private final CountDownLatch completion = new CountDownLatch(WORKERS);
 
     private int numStoredDictionaries;
+    private int numStoredPhraseDicts;
+    //    might be useful for debug
     private int numFlecks;
+    private int numPhraseFlecks;
 
-    private final BiMap<String, Integer> docId = HashBiMap.create();
+    private final BiMap<Path, Integer> docId = HashBiMap.create();
     private final Map<String, Path> termPostingPath = new HashMap<>();
+    private final Map<String, Path> phrasePostingPath = new HashMap<>();
     // TODO: use ternary search tree
     private TreeMap<String, Set<Integer>> dictionary;
+    private TreeMap<String, Set<Integer>> phraseDict;
+    private static final String FUNC_WORDS_PATH = "models/functional_words.txt";
+    private static final Set<String> funcWords;
 
-    private final Morphology morph = new Morphology();
+    static {
+        funcWords = parseFuncSet();
+    }
+
+    private static final Morphology MORPH = new Morphology();
 
     private IndexServer() {
     }
@@ -45,15 +57,47 @@ public class IndexServer {
     // creating multiple instances and running them simultaneously may use more threads than expected
     // it can be refactored to take an array of strings if the files are spread across multiple files
     public static IndexServer getInstance() {
-        return instance;
+        return INSTANCE;
     }
 
-    public boolean containsTerm(String term) {
-        return termPostingPath.containsKey(term);
+    public enum IndexType {
+        TERM, PHRASE, COORDINATE
     }
 
-    public ArrayList<Integer> getTermPostings(String term) {
-        try (BufferedReader br = new BufferedReader(new FileReader(termPostingPath.get(term).toFile()))) {
+    public boolean containsElement(String term, IndexType type) {
+        switch (type) {
+            case TERM:
+                return termPostingPath.containsKey(term);
+            case PHRASE:
+                return phrasePostingPath.containsKey(term);
+            case COORDINATE:
+                throw new UnsupportedOperationException("need to implement");
+            default:
+                throw new IllegalArgumentException("incorrect type");
+        }
+    }
+
+    /**
+     * @param term element to search for
+     * @param type type of index to search in
+     * @return posting or null if no such element found
+     */
+    public ArrayList<Integer> getPostings(String term, IndexType type) {
+        Map<String, Path> postingPath;
+        switch (type) {
+            case TERM:
+                postingPath = termPostingPath;
+                break;
+            case PHRASE:
+                postingPath = phrasePostingPath;
+                break;
+            case COORDINATE:
+                throw new UnsupportedOperationException("need to implement");
+            default:
+                throw new IllegalArgumentException("incorrect type");
+        }
+
+        try (BufferedReader br = new BufferedReader(new FileReader(postingPath.get(term).toFile()))) {
             String search = br.readLine();
             while (search != null) {
                 if (search.startsWith(term)) {
@@ -72,6 +116,10 @@ public class IndexServer {
     }
 
     public String getDocName(int docID) {
+        return docId.inverse().get(docID).getFileName().toString();
+    }
+
+    public Path getDocPath(int docID) {
         return docId.inverse().get(docID);
     }
 
@@ -82,8 +130,9 @@ public class IndexServer {
         try (Stream<Path> files = Files.walk(LIBRARY)) {
             File[] documents = files.filter(Files::isRegularFile)
                     .map(Path::toFile)
-                    .peek(doc -> docId.put(doc.getName(), docId.size()))
+                    .peek(doc -> docId.put(doc.toPath(), docId.size()))
                     .toArray(File[]::new);
+            // inefficient: MaxentTagger tagger = new MaxentTagger("models/english-left3words-distsim.tagger");
 
             for (int i = 0; i < WORKERS; i++) {
                 int from = (int) Math.round((double) documents.length / WORKERS * i);
@@ -100,66 +149,117 @@ public class IndexServer {
         System.out.println("multi time: " + (endTime - startTime) / 1e9);
     }
 
-    public void buildPhraseIndex() {
-        MaxentTagger tagger = new MaxentTagger("models/english-left3words-distsim.tagger");
-        String text = "test stanford tagger to get the result";
-
-        String tag = tagger.tagString(text);
-        String[] eachTag = tag.split("\\s+");
-        System.out.println("Word      " + "Stanford tag");
-        System.out.println("----------------------------------");
-        for (int i = 0; i < eachTag.length; i++) {
-            System.out.println(eachTag[i]);
-            //System.out.println(eachTag[i].split("_")[0] + "           " + eachTag[i].split("_")[1]);
-        }
-    }
-
     private class FileProcessor implements Runnable {
         // random is used to prevent situation when all threads want to merge simultaneously
         private final long WORKER_MEMORY = Math.round(WORKERS_MEMORY_LIMIT * (0.95 + Math.random() / 10));
         private final File[] files;
 
         FileProcessor(File[] docs) {
-            this.files = docs;
+            files = docs;
         }
 
         @Override
         public void run() {
             Set<String> vocabulary;
+            Set<String> phrases;
             for (File docFile : files) {
                 vocabulary = new TreeSet<>();
-                int docID = docId.get(docFile.getName());
-                try (BufferedReader br = new BufferedReader(new FileReader(docFile))) {
-                    String nextLine = br.readLine();
-                    while (nextLine != null) {
-                        for (String token : nextLine.split("\\s")) {
-                            token = normalize(token);
-                            if (token != null) vocabulary.add(token);
-                        }
-                        Runtime rt = Runtime.getRuntime();
-                        if (rt.maxMemory() - rt.freeMemory() > WORKER_MEMORY) {
-                            merge(new OutEntry(docID, vocabulary.toArray(new String[0])));
-                            vocabulary = new TreeSet<>();
-                        }
-                        nextLine = br.readLine();
+                phrases = new TreeSet<>();
+                int docID = docId.get(docFile.toPath());
+                TermProvider terms = new TermProvider(docFile);
+                // check func words from set, construct set
+                String firstWord = null;
+                boolean hasFuncWords = false;
+
+                while (terms.hasNextTerm()) {
+                    String term = terms.nextTerm();
+                    vocabulary.add(term);
+                    if (firstWord == null && !isFuncWord(term)) firstWord = term;
+                    else if (isFuncWord(term)) hasFuncWords = true;
+                    else { // secondWord == null && !funcWords.contains(term)
+                        if (hasFuncWords) phrases.add("* " + firstWord + " " + term);
+                        else phrases.add(firstWord + " " + term);
                     }
-                    // send to merge after processing anyway
-                    merge(new OutEntry(docId.get(docFile.getName()), vocabulary.toArray(new String[0])));
-                } catch (IOException e) {
-                    e.printStackTrace();
+
+                    Runtime rt = Runtime.getRuntime();
+                    if (rt.maxMemory() - rt.freeMemory() > WORKER_MEMORY) {
+                        merge(new OutEntry(docID, vocabulary.toArray(new String[0]), phrases.toArray(new String[0])));
+                        vocabulary = new TreeSet<>();
+                        phrases = new TreeSet<>();
+                    }
                 }
+                // send to merge after processing anyway
+                merge(new OutEntry(docId.get(docFile.toPath()),
+                        vocabulary.toArray(new String[0]), phrases.toArray(new String[0])));
             }
             completion.countDown();
         }
     }
 
     /**
+     * takes normalized word as a parameter
+     */
+    public static boolean isFuncWord(String word) {
+        return funcWords.contains(word);
+    }
+
+    private class TermProvider {
+        private BufferedReader br;
+        private String[] lineTokens;
+        private int nextTokenIndex;
+
+        TermProvider(File f) {
+            try {
+                br = new BufferedReader(new FileReader(f));
+            } catch (FileNotFoundException e) {
+                throw new IllegalArgumentException("incorrect path to file", e);
+            }
+        }
+
+        String nextTerm() {
+            if (!hasNextTerm()) throw new NoSuchElementException("no more tokes left in this file");
+            return lineTokens[nextTokenIndex++];
+        }
+
+        boolean hasNextTerm() {
+            if (nextTokenIndex == lineTokens.length) {
+                try {
+                    String nextLine = br.readLine();
+                    if (nextLine == null) return false;
+                    lineTokens = nextLine.split("\\s+");
+                    for (int i = 0; i < lineTokens.length; i++)
+                        lineTokens[i] = normalize(lineTokens[i]);
+                    nextTokenIndex = 0;
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+
+            while (nextTokenIndex < lineTokens.length) {
+                if (lineTokens[nextTokenIndex] != null) return true;
+                nextTokenIndex++;
+            }
+            return hasNextTerm();
+        }
+
+        @Override
+        public void finalize() {
+            try {
+                br.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+
+    /**
      * @param token char sequence split by whitespace
-     * @return normalized term or null the passed token is not a word
+     * @return normalized term or null if the passed token is not a word
      */
     public @Nullable
-    String normalize(String token) {
-        return morph.stem(token.toLowerCase().replaceAll("\\W", ""));
+    static String normalize(String token) {
+        return MORPH.stem(token.toLowerCase().replaceAll("\\W", ""));
     }
 
     /**
@@ -168,19 +268,24 @@ public class IndexServer {
      * @param microMap - particle of dictionary built during a processing period
      */
     private synchronized void merge(OutEntry microMap) {
-        for (String term : microMap.getValue()) {
-            Set<Integer> posting = dictionary.get(term);
-            if (posting != null) posting.add(microMap.getKey());
-            else {
-                posting = new TreeSet<>();
-                posting.add(microMap.getKey());
-                dictionary.put(term, posting);
-            }
-        }
+        replenishDictionary(dictionary, microMap.getVocabulary(), microMap.getDocId());
+        replenishDictionary(phraseDict, microMap.getPhrases(), microMap.getDocId());
 
         Runtime rt = Runtime.getRuntime();
         if (rt.maxMemory() - rt.freeMemory() > MAX_MEMORY_LOAD) {
-            saveParticle();
+            saveParticles();
+        }
+    }
+
+    private void replenishDictionary(Map<String, Set<Integer>> dictionary, String[] target, int docID) {
+        for (String element : target) {
+            Set<Integer> posting = dictionary.get(element);
+            if (posting != null) posting.add(docID);
+            else {
+                posting = new TreeSet<>();
+                posting.add(docID);
+                dictionary.put(element, posting);
+            }
         }
     }
 
@@ -189,9 +294,18 @@ public class IndexServer {
         return String.format("FREE memory: %.2f%%", (double) rt.freeMemory() / rt.maxMemory() * 100);
     }*/
 
-    private void saveParticle() {
-        String pathName = String.format(TEMP_PARTICLES, numStoredDictionaries++);
-        try (BufferedWriter bw = new BufferedWriter(new FileWriter(new File(pathName)))) {
+    private void saveParticles() {
+        String pathNameDict = String.format(TEMP_PARTICLES, numStoredDictionaries++);
+        String pathNamePhraseDict = String.format(TEMP_PHRASE_PARTICLES, numStoredPhraseDicts++);
+        write(pathNameDict, dictionary);
+        write(pathNamePhraseDict, phraseDict);
+        dictionary = new TreeMap<>();
+        phraseDict = new TreeMap<>();
+        System.gc();
+    }
+
+    private void write(String path, TreeMap<String, Set<Integer>> dictionary) {
+        try (BufferedWriter bw = new BufferedWriter(new FileWriter(new File(path)))) {
             for (Map.Entry<String, Set<Integer>> entry : dictionary.entrySet()) {
                 bw.write(entry.getKey() + DP_SEPARATOR + entry.getValue().toString());
                 bw.newLine();
@@ -199,25 +313,38 @@ public class IndexServer {
         } catch (IOException e) {
             e.printStackTrace();
         }
-        dictionary = new TreeMap<>();
-        System.gc();
     }
 
     private void mergeParticles() throws IOException {
-        saveParticle();
-// open reader for each particle and maintain priority queue for each particle on disk
+        saveParticles();
+        // open reader for each particle and maintain priority queue for each particle on disk
         PriorityQueue<InEntry> entries = new PriorityQueue<>();
         BufferedReader[] readers = new BufferedReader[numStoredDictionaries];
+        initReaders(entries, readers, numStoredDictionaries, TEMP_PARTICLES);
+        numFlecks = abstractMerge(entries, readers, INDEX_FLECKS, termPostingPath);
+
+        // repeat for phrase index
+        entries = new PriorityQueue<>();
+        readers = new BufferedReader[numStoredPhraseDicts];
+        initReaders(entries, readers, numStoredPhraseDicts, TEMP_PHRASE_PARTICLES);
+        numPhraseFlecks = abstractMerge(entries, readers, PHRASE_INDEX_FLECKS, phrasePostingPath);
+    }
+
+    private void initReaders(PriorityQueue<InEntry> entries, BufferedReader[] readers, int numStored, String particlesPath) throws IOException {
         String checkLine;
-        for (int i = 0; i < numStoredDictionaries; i++) {
-            String pathName = String.format(TEMP_PARTICLES, i);
+        for (int i = 0; i < numStored; i++) {
+            String pathName = String.format(particlesPath, i);
             readers[i] = new BufferedReader(new FileReader(new File(pathName)));
             checkLine = readers[i].readLine();
             if (checkLine != null) entries.add(new InEntry(i, checkLine));
         }
+    }
 
+    private int abstractMerge(PriorityQueue<InEntry> entries, BufferedReader[] readers, String outPath,
+                              Map<String, Path> postingPath) throws IOException {
+        int numWritten = 0;
         // initialize writer for first dictionary fleck
-        String pathName = String.format(INDEX_FLECKS, numFlecks++);
+        String pathName = String.format(outPath, numWritten++);
         BufferedWriter bw = new BufferedWriter(new FileWriter(new File(pathName)));
 
         while (true) {
@@ -230,7 +357,7 @@ public class IndexServer {
             InEntry nextEntry = entries.poll();
             StringBuilder posting = new StringBuilder();
             appendPosting(entries, readers, nextEntry, posting);
-            termPostingPath.put(nextEntry.getTerm(), Paths.get(pathName));
+            postingPath.put(nextEntry.getTerm(), Paths.get(pathName));
             // check '!entries.isEmpty()' eliminates NullPointerException
             // find and process current term in all files
             while (!entries.isEmpty() && nextEntry.getTerm().equals(entries.peek().getTerm()))
@@ -243,10 +370,11 @@ public class IndexServer {
             if (rt.maxMemory() - rt.freeMemory() > MAX_MEMORY_LOAD) {
                 bw.flush();
                 bw.close();
-                pathName = String.format(INDEX_FLECKS, numFlecks++);
+                pathName = String.format(outPath, numWritten++);
                 bw = new BufferedWriter(new FileWriter(new File(pathName)));
             }
         }
+        return numWritten;
     }
 
     private void appendPosting(PriorityQueue<InEntry> entries, BufferedReader[] readers,
@@ -262,19 +390,25 @@ public class IndexServer {
     private class OutEntry {
         private final Integer docID;
         private final String[] vocabulary;
+        private final String[] phrases;
 
-        OutEntry(Integer key, String[] value) {
-            if (key == null) throw new IllegalArgumentException("null key is not permitted");
-            docID = key;
-            vocabulary = value;
+        OutEntry(Integer id, String[] v, String[] ph) {
+            if (id == null) throw new IllegalArgumentException("null id is not permitted");
+            docID = id;
+            vocabulary = v;
+            phrases = ph;
         }
 
-        public int getKey() {
+        int getDocId() {
             return docID;
         }
 
-        public String[] getValue() {
+        String[] getVocabulary() {
             return vocabulary;
+        }
+
+        String[] getPhrases() {
+            return phrases;
         }
     }
 
@@ -306,5 +440,19 @@ public class IndexServer {
         public String getPostings() {
             return postings;
         }
+    }
+
+    private static Set<String> parseFuncSet() {
+        Set<String> func = new HashSet<>();
+        try (BufferedReader br = new BufferedReader(new FileReader(new File(FUNC_WORDS_PATH)))) {
+            String word = br.readLine();
+            while (word != null) {
+                func.add(word);
+                word = br.readLine();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return func;
     }
 }

@@ -1,11 +1,16 @@
 package ukma.ir;
 
+import edu.stanford.nlp.tagger.maxent.MaxentTagger;
 import javafx.application.Application;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
 import ukma.ir.Controllers.MainController;
 import ukma.ir.Controllers.ResultController;
+
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 public class App extends Application {
     private Scene mainScene, resultScene;
