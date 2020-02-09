@@ -3,6 +3,7 @@ package ukma.ir;
 import java.io.*;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class QueryProcessor {
 
@@ -14,14 +15,14 @@ public class QueryProcessor {
      */
     public List<String> processBooleanQuery(String q) {
         Set<Integer> reminders = new HashSet<>();
-        Arrays.stream(q.split("OR"))
-                .map(union -> union.split("AND"))
+        Arrays.stream(q.split(" OR "))
+                .map(union -> union.split(" AND "))
                 .forEach(unionParticle -> {
                     List<String> includeTerms = new ArrayList<>();
                     List<String> excludeTerms = new ArrayList<>();
                     for (String token : unionParticle)
-                        if (token.startsWith("NOT"))
-                            excludeTerms.add(IndexServer.normalize(token));
+                        if (token.startsWith("NOT "))
+                            excludeTerms.add(IndexServer.normalize(token.substring(4)));
                         else includeTerms.add(IndexServer.normalize(token));
 
                     // if there are terms to include and one of these terms is in dictionary (in this case - 0th),
@@ -29,10 +30,10 @@ public class QueryProcessor {
                     // then set posting for this term as a base for further intersections
                     // else do no intersection as the result is empty if any entry is empty
                     Set<Integer> inDocs = new HashSet<>();
-                    if (!includeTerms.isEmpty() && indexService.containsElement(includeTerms.get(0), IndexServer.IndexType.PHRASE)) {
-                        inDocs.addAll(indexService.getPostings(includeTerms.get(0), IndexServer.IndexType.PHRASE)); // set base
+                    if (!includeTerms.isEmpty() && indexService.containsElement(includeTerms.get(0), IndexServer.IndexType.TERM)) {
+                        inDocs.addAll(indexService.getPostings(includeTerms.get(0), IndexServer.IndexType.TERM)); // set base
                         includeTerms.forEach(term -> {
-                            ArrayList<Integer> posting = indexService.getPostings(term, IndexServer.IndexType.PHRASE);
+                            ArrayList<Integer> posting = indexService.getPostings(term, IndexServer.IndexType.TERM);
                             if (posting != null) inDocs.retainAll(posting); // intersect
                         });
                     }
@@ -40,7 +41,7 @@ public class QueryProcessor {
                     Set<Integer> exDocs = new HashSet<>();
                     for (String term : excludeTerms) {
                         if (term == null) continue; // normalizer might return null
-                        ArrayList<Integer> posting = indexService.getPostings(term, IndexServer.IndexType.PHRASE);
+                        ArrayList<Integer> posting = indexService.getPostings(term, IndexServer.IndexType.TERM);
                         if (posting != null) exDocs.addAll(posting);
                     }
 
@@ -53,7 +54,7 @@ public class QueryProcessor {
         return result;
     }
 
-    public List<Path> processPhraceQuery(String query) {
+    public List<String> processPhraseQuery(String query) {
         String[] tokens = query.split("\\s+");
         for (int i = 0; i < tokens.length; i++)
             tokens[i] = IndexServer.normalize(tokens[i]);
@@ -62,10 +63,10 @@ public class QueryProcessor {
         String firstWord = null;
         boolean hasFuncWords = false;
 
-        StringBuilder normilizedQuery = new StringBuilder(query.length());
+        StringBuilder normalizedQuery = new StringBuilder(query.length());
 
         for (String term : tokens) {
-            normilizedQuery.append(term).append(' ');
+            normalizedQuery.append(term).append(' ');
             if (firstWord == null && !IndexServer.isFuncWord(term)) firstWord = term;
             else if (IndexServer.isFuncWord(term)) hasFuncWords = true;
             else { // secondWord == null && !funcWords.contains(term)
@@ -80,10 +81,10 @@ public class QueryProcessor {
         for (int i = 1; i < phrases.size(); i++)
             commonPostings = intersect(commonPostings, indexService.getPostings(phrases.get(i), IndexServer.IndexType.PHRASE));
 
-        return filterValidDocs(indexService, commonPostings, normilizedQuery.toString());
+        return filterValidDocs(indexService, commonPostings, normalizedQuery.toString()).stream()
+                .map(Path::getFileName).map(Path::toString).collect(Collectors.toList());
     }
 
-    // possible to parallelize
     private List<Path> filterValidDocs(IndexServer is, List<Integer> docIDs, String query) {
         int numReadLines = 20;
         List<Path> validDocs = new ArrayList<>();
@@ -98,9 +99,9 @@ public class QueryProcessor {
                     for (int i = 0; i < numReadLines; i++) {
                         nextLine = br.readLine();
                         if (nextLine == null) break;
-                        textSlice.append(nextLine);
+                        textSlice.append(nextLine).append(" ");
                     }
-                    if (textSlice.toString().contains(query)) {
+                    if (textSlice.toString().replaceAll("\\s+", " ").contains(query)) {
                         validDocs.add(doc);
                         continue label;
                     }

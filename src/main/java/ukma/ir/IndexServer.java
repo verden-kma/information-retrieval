@@ -16,10 +16,10 @@ import java.util.stream.Stream;
 
 
 public class IndexServer {
-    private static final int WORKERS = 3;
+    private static final int WORKERS = 4;
     private static final String TEMP_PARTICLES = "data/dictionary/dp%d.txt";
     private static final String TEMP_PHRASE_PARTICLES = "data/dictionary/phdp%d.txt";
-    private static final String INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
+    private static final String TERM_INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
     private static final String PHRASE_INDEX_FLECKS = "data/dictionary/phraseIndexFleck_%d.txt";
     private static final long WORKERS_MEMORY_LIMIT = Math.round(Runtime.getRuntime().maxMemory() * 0.5);
     private static final long MAX_MEMORY_LOAD = Math.round(Runtime.getRuntime().maxMemory() * 0.7);
@@ -35,9 +35,11 @@ public class IndexServer {
     private int numFlecks;
     private int numPhraseFlecks;
 
+    // path - docId
     private final BiMap<Path, Integer> docId = HashBiMap.create();
-    private final Map<String, Path> termPostingPath = new HashMap<>();
-    private final Map<String, Path> phrasePostingPath = new HashMap<>();
+    private final Map<String, Integer> termPostingPath = new HashMap<>(); // term - number of index file
+    private final Map<String, Integer> phrasePostingPath = new HashMap<>();
+    // building-time dictionaries
     // TODO: use ternary search tree
     private TreeMap<String, Set<Integer>> dictionary;
     private TreeMap<String, Set<Integer>> phraseDict;
@@ -83,13 +85,13 @@ public class IndexServer {
      * @return posting or null if no such element found
      */
     public ArrayList<Integer> getPostings(String term, IndexType type) {
-        Map<String, Path> postingPath;
+        String path;
         switch (type) {
             case TERM:
-                postingPath = termPostingPath;
+                path = String.format(TERM_INDEX_FLECKS, termPostingPath.get(term));
                 break;
             case PHRASE:
-                postingPath = phrasePostingPath;
+                path = String.format(PHRASE_INDEX_FLECKS, phrasePostingPath.get(term));
                 break;
             case COORDINATE:
                 throw new UnsupportedOperationException("need to implement");
@@ -97,13 +99,13 @@ public class IndexServer {
                 throw new IllegalArgumentException("incorrect type");
         }
 
-        try (BufferedReader br = new BufferedReader(new FileReader(postingPath.get(term).toFile()))) {
+        ArrayList<Integer> pList = new ArrayList<>();
+        try (BufferedReader br = new BufferedReader(new FileReader(new File(path)))) {
             String search = br.readLine();
             while (search != null) {
                 if (search.startsWith(term)) {
-                    String postings = search.substring(search.indexOf(DP_SEPARATOR + DP_SEPARATOR.length()));
-                    ArrayList<Integer> pList = new ArrayList<>();
-                    for (String docID : postings.split(" "))
+                    String postings = search.substring(search.indexOf(DP_SEPARATOR) + DP_SEPARATOR.length());
+                    for (String docID : postings.split("\\s+"))
                         pList.add(Integer.parseInt(docID));
                     return pList;
                 }
@@ -112,7 +114,7 @@ public class IndexServer {
         } catch (IOException e) {
             e.printStackTrace();
         }
-        return null;
+        return pList;
     }
 
     public String getDocName(int docID) {
@@ -126,6 +128,7 @@ public class IndexServer {
     public void buildInvertedIndex() {
         long startTime = System.nanoTime();
         dictionary = new TreeMap<>();
+        phraseDict = new TreeMap<>();
 
         try (Stream<Path> files = Files.walk(LIBRARY)) {
             File[] documents = files.filter(Files::isRegularFile)
@@ -151,7 +154,7 @@ public class IndexServer {
 
     private class FileProcessor implements Runnable {
         // random is used to prevent situation when all threads want to merge simultaneously
-        private final long WORKER_MEMORY = Math.round(WORKERS_MEMORY_LIMIT * (0.95 + Math.random() / 10));
+        private final long WORKER_MEMORY = Math.round(WORKERS_MEMORY_LIMIT * (0.95 + Math.random() * 10));
         private final File[] files;
 
         FileProcessor(File[] docs) {
@@ -160,13 +163,14 @@ public class IndexServer {
 
         @Override
         public void run() {
+            Morphology morph = new Morphology();
             Set<String> vocabulary;
             Set<String> phrases;
             for (File docFile : files) {
                 vocabulary = new TreeSet<>();
                 phrases = new TreeSet<>();
                 int docID = docId.get(docFile.toPath());
-                TermProvider terms = new TermProvider(docFile);
+                TermProvider terms = new TermProvider(docFile, morph);
                 // check func words from set, construct set
                 String firstWord = null;
                 boolean hasFuncWords = false;
@@ -179,6 +183,8 @@ public class IndexServer {
                     else { // secondWord == null && !funcWords.contains(term)
                         if (hasFuncWords) phrases.add("* " + firstWord + " " + term);
                         else phrases.add(firstWord + " " + term);
+                        firstWord = null;
+                        hasFuncWords = false;
                     }
 
                     Runtime rt = Runtime.getRuntime();
@@ -189,8 +195,7 @@ public class IndexServer {
                     }
                 }
                 // send to merge after processing anyway
-                merge(new OutEntry(docId.get(docFile.toPath()),
-                        vocabulary.toArray(new String[0]), phrases.toArray(new String[0])));
+                merge(new OutEntry(docID, vocabulary.toArray(new String[0]), phrases.toArray(new String[0])));
             }
             completion.countDown();
         }
@@ -207,8 +212,10 @@ public class IndexServer {
         private BufferedReader br;
         private String[] lineTokens;
         private int nextTokenIndex;
+        private Morphology morph;
 
-        TermProvider(File f) {
+        TermProvider(File f, Morphology m) {
+            morph = m;
             try {
                 br = new BufferedReader(new FileReader(f));
             } catch (FileNotFoundException e) {
@@ -222,13 +229,13 @@ public class IndexServer {
         }
 
         boolean hasNextTerm() {
-            if (nextTokenIndex == lineTokens.length) {
+            if (lineTokens == null || nextTokenIndex == lineTokens.length) {
                 try {
                     String nextLine = br.readLine();
                     if (nextLine == null) return false;
                     lineTokens = nextLine.split("\\s+");
                     for (int i = 0; i < lineTokens.length; i++)
-                        lineTokens[i] = normalize(lineTokens[i]);
+                        lineTokens[i] = normalize(lineTokens[i], morph);
                     nextTokenIndex = 0;
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -259,7 +266,11 @@ public class IndexServer {
      */
     public @Nullable
     static String normalize(String token) {
-        return MORPH.stem(token.toLowerCase().replaceAll("\\W", ""));
+        return normalize(token, MORPH);
+    }
+
+    static String normalize(String token, Morphology m) {
+        return m.stem(token.toLowerCase().replaceAll("\\W", ""));
     }
 
     /**
@@ -321,16 +332,17 @@ public class IndexServer {
         PriorityQueue<InEntry> entries = new PriorityQueue<>();
         BufferedReader[] readers = new BufferedReader[numStoredDictionaries];
         initReaders(entries, readers, numStoredDictionaries, TEMP_PARTICLES);
-        numFlecks = abstractMerge(entries, readers, INDEX_FLECKS, termPostingPath);
+        numFlecks = abstractMerge(entries, readers, TERM_INDEX_FLECKS, termPostingPath, TEMP_PARTICLES);
 
         // repeat for phrase index
         entries = new PriorityQueue<>();
         readers = new BufferedReader[numStoredPhraseDicts];
         initReaders(entries, readers, numStoredPhraseDicts, TEMP_PHRASE_PARTICLES);
-        numPhraseFlecks = abstractMerge(entries, readers, PHRASE_INDEX_FLECKS, phrasePostingPath);
+        numPhraseFlecks = abstractMerge(entries, readers, PHRASE_INDEX_FLECKS, phrasePostingPath, TEMP_PHRASE_PARTICLES);
     }
 
-    private void initReaders(PriorityQueue<InEntry> entries, BufferedReader[] readers, int numStored, String particlesPath) throws IOException {
+    private void initReaders(PriorityQueue<InEntry> entries, BufferedReader[] readers,
+                             int numStored, String particlesPath) throws IOException {
         String checkLine;
         for (int i = 0; i < numStored; i++) {
             String pathName = String.format(particlesPath, i);
@@ -341,10 +353,10 @@ public class IndexServer {
     }
 
     private int abstractMerge(PriorityQueue<InEntry> entries, BufferedReader[] readers, String outPath,
-                              Map<String, Path> postingPath) throws IOException {
+                              Map<String, Integer> postingPath, String primaryPath) throws IOException {
         int numWritten = 0;
         // initialize writer for first dictionary fleck
-        String pathName = String.format(outPath, numWritten++);
+        String pathName = String.format(outPath, numWritten);
         BufferedWriter bw = new BufferedWriter(new FileWriter(new File(pathName)));
 
         while (true) {
@@ -356,12 +368,12 @@ public class IndexServer {
 
             InEntry nextEntry = entries.poll();
             StringBuilder posting = new StringBuilder();
-            appendPosting(entries, readers, nextEntry, posting);
-            postingPath.put(nextEntry.getTerm(), Paths.get(pathName));
+            appendPosting(entries, readers, nextEntry, posting, primaryPath);
+            postingPath.put(nextEntry.getTerm(), numWritten);
             // check '!entries.isEmpty()' eliminates NullPointerException
             // find and process current term in all files
             while (!entries.isEmpty() && nextEntry.getTerm().equals(entries.peek().getTerm()))
-                appendPosting(entries, readers, entries.poll(), posting);
+                appendPosting(entries, readers, entries.poll(), posting, primaryPath);
 
             bw.write(nextEntry.getTerm() + DP_SEPARATOR + posting.toString()
                     .replaceAll("[\\[\\]]", " ").replaceAll(",", "").trim());
@@ -370,20 +382,21 @@ public class IndexServer {
             if (rt.maxMemory() - rt.freeMemory() > MAX_MEMORY_LOAD) {
                 bw.flush();
                 bw.close();
-                pathName = String.format(outPath, numWritten++);
+                pathName = String.format(outPath, ++numWritten);
                 bw = new BufferedWriter(new FileWriter(new File(pathName)));
+                System.gc();
             }
         }
         return numWritten;
     }
 
     private void appendPosting(PriorityQueue<InEntry> entries, BufferedReader[] readers,
-                               InEntry nextEntry, StringBuilder posting) throws IOException {
+                               InEntry nextEntry, StringBuilder posting, String primaryPath) throws IOException {
         posting.append(nextEntry.getPostings());
         String newLine = readers[nextEntry.getIndex()].readLine();
         if (newLine == null) {
             readers[nextEntry.getIndex()].close(); //delete file
-            Files.delete(Paths.get(String.format(TEMP_PARTICLES, nextEntry.getIndex())));
+           //Files.delete(Paths.get(String.format(primaryPath, nextEntry.getIndex())));
         } else entries.add(new InEntry(nextEntry.getIndex(), newLine));
     }
 
@@ -444,7 +457,8 @@ public class IndexServer {
 
     private static Set<String> parseFuncSet() {
         Set<String> func = new HashSet<>();
-        try (BufferedReader br = new BufferedReader(new FileReader(new File(FUNC_WORDS_PATH)))) {
+        try (BufferedReader br = new BufferedReader(new FileReader(
+                new File(Thread.currentThread().getContextClassLoader().getResource(FUNC_WORDS_PATH).getPath())))) {
             String word = br.readLine();
             while (word != null) {
                 func.add(word);

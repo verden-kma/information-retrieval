@@ -8,10 +8,6 @@ import javafx.stage.Stage;
 import ukma.ir.Controllers.MainController;
 import ukma.ir.Controllers.ResultController;
 
-import java.util.Set;
-import java.util.TreeMap;
-import java.util.TreeSet;
-
 public class App extends Application {
     private Scene mainScene, resultScene;
     private Stage primary;
@@ -28,6 +24,7 @@ public class App extends Application {
         mainScene = new Scene(mainLoader.load());
         MainController mc = mainLoader.getController();
         mc.takeEntry(this);
+        mc.initVisual();
 
         FXMLLoader resultLoader = new FXMLLoader();
         resultLoader.setLocation(getClass().getResource("/fxml/result-frame.fxml"));
@@ -36,11 +33,11 @@ public class App extends Application {
         rc.takeEntry(this);
 
         primaryStage.setScene(mainScene);
-        primaryStage.setTitle("Boolean query");
+        primaryStage.setTitle("Input window");
 
         // bind list of answers from main controller to the list view in
         rc.bindList(mc.getModel());
-        IndexServer.getInstance().buildInvertedIndex(); // debug
+        IndexServer.getInstance().buildInvertedIndex(); // for debug
         primaryStage.show();
     }
 
