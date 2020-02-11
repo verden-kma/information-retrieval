@@ -10,8 +10,6 @@ import ukma.ir.App;
 import ukma.ir.IndexServer;
 import ukma.ir.QueryProcessor;
 
-import static java.lang.String.valueOf;
-
 public class MainController {
 
     private App entry;
@@ -22,7 +20,7 @@ public class MainController {
     private ChoiceBox<IndexServer.IndexType> searchMode;
 
     public void initVisual() {
-        searchMode.getItems().addAll(IndexServer.IndexType.TERM, IndexServer.IndexType.PHRASE);
+        searchMode.getItems().addAll(IndexServer.IndexType.TERM, IndexServer.IndexType.PHRASE, IndexServer.IndexType.COORDINATE);
         searchMode.setValue(IndexServer.IndexType.TERM);
     }
 
@@ -31,10 +29,10 @@ public class MainController {
         try {
             String query = inputField.getText();
             inputField.clear();
-            if (!query.matches("[\\w\\s]+")) {
-                new Alert(Alert.AlertType.ERROR, "incorrect input query\n").show();
-                return;
-            }
+//            if (!query.matches("[\\w\\s]+")) {
+//                new Alert(Alert.AlertType.ERROR, "incorrect input query\n").show();
+//                return;
+//            }
             QueryProcessor qp = new QueryProcessor();
             switch (searchMode.getSelectionModel().getSelectedItem()) {
                 case TERM:
@@ -49,7 +47,7 @@ public class MainController {
             }
             entry.showResult();
         }catch (IllegalArgumentException e) {
-            new Alert(Alert.AlertType.ERROR, "minimal length of a query is 2 words").show();
+            new Alert(Alert.AlertType.ERROR, e.getMessage()).show();
 
         }
         catch (Exception e) {

@@ -146,7 +146,54 @@ public class QueryProcessor {
         return res;
     }
 
-    public List<String> processPositionalQuery(String query) {
-        return null;
+    public List<String> processPositionalQuery(String query) throws IOException {
+        if (!query.trim().matches("\\w+(\\s+/\\d+\\s+\\w+)*")) throw new IllegalArgumentException("Wrong input format");
+        String[] tokens = query.trim().split("\\s+");
+        String[] terms = new String[tokens.length/2 + 1];
+        int[] distance = new int[tokens.length/2];
+
+        for (int i = 0, j = 0; i < tokens.length; j++, i += 2) {
+            terms[j] = IndexServer.normalize(tokens[i]);
+            if (!indexService.containsElement(terms[j], IndexServer.IndexType.TERM)) return new ArrayList<>(0);
+        }
+
+        for (int i = 1, j = 0; i < tokens.length; j++, i += 2)
+            distance[j] = Integer.parseInt(tokens[i].substring(1));
+
+        Set<Integer> relevant = new TreeSet<>();
+        for (int i = 0; i + 1 < terms.length; i++)
+            positionalIntersect(terms[i], terms[i+1], distance[i])
+                    .forEach(arr -> relevant.add(arr[0]));
+
+        return relevant.stream().map(indexService::getDocPath).map(Path::getFileName)
+                .map(Path::toString).collect(Collectors.toList());
+    }
+
+    // TODO: find out the reason for duplicates
+    private List<int[]> positionalIntersect(String t1, String t2, int k) throws IOException {
+        ArrayList<int[]> answer = new ArrayList<>();
+        Map<Integer, ArrayList<Integer>> docCoordMap1 = indexService.getTermDocCoord(t1);
+        Map<Integer, ArrayList<Integer>> docCoordMap2 = indexService.getTermDocCoord(t2);
+        Integer[] docs1 = docCoordMap1.keySet().toArray(new Integer[0]);
+        Integer[] docs2 = docCoordMap2.keySet().toArray(new Integer[0]);
+        for (int i = 0, j = 0; i < docs1.length && j < docs2.length;) {
+            if (docs1[i].equals(docs2[j])) {
+                Queue<Integer> candidates = new ArrayDeque<>();
+                ArrayList<Integer> coords1 = docCoordMap1.get(docs1[i]);
+                ArrayList<Integer> coords2 = docCoordMap2.get(docs2[j]);
+                for (Integer pos1 : coords1) {
+                    for (Integer pos2 : coords2)
+                        if (pos1 - pos2 < k) candidates.add(pos2);
+                        else if (pos2 > pos1) break;
+
+                    while (candidates.size() > 0 && candidates.peek() - pos1 > k) candidates.remove();
+                    for (Integer p : candidates) answer.add(new int[]{docs1[i], pos1, p});
+                }
+                i++; j++;
+            }
+            else if (docs1[i].compareTo(docs2[j]) < 0) i++;
+            else j++;
+        }
+        return answer;
     }
 }
