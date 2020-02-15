@@ -20,7 +20,7 @@ public class MainController {
     private ChoiceBox<IndexServer.IndexType> searchMode;
 
     public void initVisual() {
-        searchMode.getItems().addAll(IndexServer.IndexType.TERM, IndexServer.IndexType.PHRASE, IndexServer.IndexType.COORDINATE);
+        searchMode.getItems().addAll(IndexServer.IndexType.TERM, IndexServer.IndexType.COORDINATE);
         searchMode.setValue(IndexServer.IndexType.TERM);
     }
 
@@ -37,9 +37,6 @@ public class MainController {
             switch (searchMode.getSelectionModel().getSelectedItem()) {
                 case TERM:
                     queryResponse.setAll(qp.processBooleanQuery(query));
-                    break;
-                case PHRASE:
-                    queryResponse.setAll(qp.processPhraseQuery(query));
                     break;
                 case COORDINATE:
                     queryResponse.setAll(qp.processPositionalQuery(query));
