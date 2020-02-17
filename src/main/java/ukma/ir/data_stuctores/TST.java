@@ -1,8 +1,8 @@
-package ukma.ir;
+package ukma.ir.data_stuctores;
 
 import java.io.Serializable;
-import java.util.ArrayDeque;
-import java.util.Queue;
+import java.util.*;
+import java.util.stream.Stream;
 
 public class TST<Value> implements Serializable {
     private int n;              // size
@@ -104,6 +104,14 @@ public class TST<Value> implements Serializable {
         return x;
     }
 
+    @SuppressWarnings("unchecked")
+    public Set<Map.Entry<String, Value>> entrySet() {
+        Set<Entry> set = new TreeSet<>();
+        SetExecutor se = new SetExecutor(set);
+        collect(root, new StringBuilder(), se);
+        return (Set<Map.Entry<String, Value>>) se.getSet();
+    }
+
     /**
      * Returns the string in the symbol table that is the longest prefix of {@code query},
      * or {@code null}, if no such string.
@@ -135,58 +143,14 @@ public class TST<Value> implements Serializable {
     }
 
     /**
-     * Returns all keys in the symbol table as an {@code Iterable}.
-     * To iterate over all of the keys in the symbol table named {@code st},
-     * use the foreach notation: {@code for (Key key : st.keys())}.
-     *
-     * @return all keys in the symbol table as an {@code Iterable}
-     */
-    public Iterable<String> keys() {
-        Queue<String> queue = new ArrayDeque<>();
-        collect(root, new StringBuilder(), queue);
-        return queue;
-    }
-
-    /**
-     * Returns all of the keys in the set that start with {@code prefix}.
-     *
-     * @param prefix the prefix
-     * @return all of the keys in the set that start with {@code prefix},
-     * as an iterable
-     * @throws IllegalArgumentException if {@code prefix} is {@code null}
-     */
-    public Iterable<String> keysWithPrefix(String prefix) {
-        if (prefix == null) {
-            throw new IllegalArgumentException("calls keysWithPrefix() with null argument");
-        }
-        Queue<String> queue = new ArrayDeque<>();
-        Node<Value> x = get(root, prefix, 0);
-        if (x == null) return queue;
-        if (x.val != null) queue.add(prefix);
-        collect(x.mid, new StringBuilder(prefix), queue);
-        return queue;
-    }
-
-    // all keys in subtrie rooted at x with given prefix
-    private void collect(Node<Value> x, StringBuilder prefix, Queue<String> queue) {
-        if (x == null) return;
-        collect(x.left, prefix, queue);
-        if (x.val != null) queue.add(prefix.toString() + x.c);
-        collect(x.mid, prefix.append(x.c), queue);
-        prefix.deleteCharAt(prefix.length() - 1);
-        collect(x.right, prefix, queue);
-    }
-
-
-    /**
      * Returns all of the keys in the symbol table that match {@code pattern},
      * where . symbol is treated as a wildcard character.
      *
      * @param pattern the pattern
      * @return all of the keys in the symbol table that match {@code pattern},
-     * as an iterable, where . is treated as a wildcard character.
+     * as a collection, where . is treated as a wildcard character.
      */
-    public Iterable<String> keysThatMatch(String pattern) {
+    public Collection<String> keysThatMatch(String pattern) {
         Queue<String> queue = new ArrayDeque<>();
         collect(root, new StringBuilder(), 0, pattern, queue);
         return queue;
@@ -204,5 +168,125 @@ public class TST<Value> implements Serializable {
             }
         }
         if (c == '.' || c > x.c) collect(x.right, prefix, i, pattern, queue);
+    }
+
+    /**
+     * Returns all keys in the symbol table as a {@code Collection}.
+     * To iterate over all of the keys in the symbol table named {@code st},
+     * use the foreach notation: {@code for (Key key : st.keys())}.
+     *
+     * @return all keys in the symbol table as a {@code Collection}
+     */
+    public Collection<String> keys() {
+        Queue<String> queue = new ArrayDeque<>();
+        collect(root, new StringBuilder(), queue);
+        return queue;
+    }
+
+    /**
+     * Returns all of the keys in the set that start with {@code prefix}.
+     *
+     * @param prefix the prefix
+     * @return all of the keys in the set that start with {@code prefix},
+     * as a collection
+     * @throws IllegalArgumentException if {@code prefix} is {@code null}
+     */
+    public Collection<String> keysWithPrefix(String prefix) {
+        if (prefix == null) {
+            throw new IllegalArgumentException("calls keysWithPrefix() with null argument");
+        }
+        Queue<String> queue = new ArrayDeque<>();
+        Node<Value> x = get(root, prefix, 0);
+        if (x == null) return queue;
+        if (x.val != null) queue.add(prefix);
+        collect(x.mid, new StringBuilder(prefix), queue);
+        return queue;
+    }
+
+    // all keys in subtrie rooted at x with given prefix
+//    private void collect(Node<Value> x, StringBuilder prefix, Queue<String> queue) {
+//        if (x == null) return;
+//        collect(x.left, prefix, queue);
+//        if (x.val != null) queue.add(prefix.toString() + x.c);
+//        collect(x.mid, prefix.append(x.c), queue);
+//        prefix.deleteCharAt(prefix.length() - 1);
+//        collect(x.right, prefix, queue);
+//    }
+
+    private void collect(Node<Value> x, StringBuilder prefix, Queue<String> queue) {
+        collect(x, prefix, new QueueExecutor(queue));
+    }
+
+    private void collect(Node<Value> x, StringBuilder prefix, Executor exec) {
+        if (x == null) return;
+        collect(x.left, prefix, exec);
+        if (x.val != null) exec.take(x, prefix.toString() + x.c);
+        collect(x.mid, prefix.append(x.c), exec);
+        prefix.deleteCharAt(prefix.length() - 1);
+        collect(x.right, prefix, exec);
+    }
+
+    private abstract class Executor {
+        abstract void take(Node<Value> n, String prefix);
+    }
+
+    private class SetExecutor extends Executor {
+        private Set<Entry> set;
+
+        SetExecutor(Set<Entry> s) {
+            set = s;
+        }
+
+        @Override
+        void take(Node<Value> n, String prefix) {
+            set.add(new Entry(prefix, n.val));
+        }
+
+        Set<? extends Map.Entry<String, Value>> getSet() {
+            return set;
+        }
+    }
+
+    private class QueueExecutor extends Executor {
+        private Queue<String> queue;
+
+        QueueExecutor(Queue<String> q) {
+            queue = q;
+        }
+
+        @Override
+        void take(Node<Value> n, String prefix) {
+            queue.add(prefix);
+        }
+    }
+
+    private class Entry implements Map.Entry<String, Value>, Comparable<Entry> {
+        private final String key;
+        private Value value;
+
+        Entry(String k, Value v) {
+            key = k;
+            value = v;
+        }
+
+        @Override
+        public String getKey() {
+            return key;
+        }
+
+        @Override
+        public Value getValue() {
+            return value;
+        }
+
+        @Override
+        public Value setValue(Value v) {
+            return value = v;
+        }
+
+        @Override
+        public int compareTo(Entry entry) {
+            return key.compareTo(entry.key);
+        }
     }
 }

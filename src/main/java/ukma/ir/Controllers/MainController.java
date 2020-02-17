@@ -20,7 +20,7 @@ public class MainController {
     private ChoiceBox<IndexServer.IndexType> searchMode;
 
     public void initVisual() {
-        searchMode.getItems().addAll(IndexServer.IndexType.TERM, IndexServer.IndexType.COORDINATE);
+        searchMode.getItems().addAll(IndexServer.IndexType.TERM, IndexServer.IndexType.COORDINATE, IndexServer.IndexType.JOKER);
         searchMode.setValue(IndexServer.IndexType.TERM);
     }
 
@@ -28,11 +28,12 @@ public class MainController {
     void search() {
         try {
             String query = inputField.getText();
-            inputField.clear();
-//            if (!query.matches("[\\w\\s]+")) {
-//                new Alert(Alert.AlertType.ERROR, "incorrect input query\n").show();
-//                return;
-//            }
+            if (query == null || query.matches("\\s*")) {
+                new Alert(Alert.AlertType.ERROR, "empty query is not allowed").show();
+                return;
+            }
+            query = query.trim();
+
             QueryProcessor qp = new QueryProcessor();
             switch (searchMode.getSelectionModel().getSelectedItem()) {
                 case TERM:
@@ -41,13 +42,15 @@ public class MainController {
                 case COORDINATE:
                     queryResponse.setAll(qp.processPositionalQuery(query));
                     break;
+                case JOKER:
+                    queryResponse.setAll(qp.processJokerQuery(query));
+                    break;
             }
             entry.showResult();
-        }catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException e) {
             new Alert(Alert.AlertType.ERROR, e.getMessage()).show();
 
-        }
-        catch (Exception e) {
+        } catch (Exception e) {
             e.printStackTrace();
             new Alert(Alert.AlertType.ERROR, "Unknown error has occurred!").show();
         }

@@ -3,6 +3,8 @@ package ukma.ir;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import edu.stanford.nlp.process.Morphology;
+import ukma.ir.data_stuctores.RandomizedQueue;
+import ukma.ir.data_stuctores.TST;
 
 import javax.annotation.Nullable;
 import java.io.*;
@@ -28,6 +30,7 @@ public class IndexServer {
     private final BiMap<String, Integer> docId; // path - docId
     // term - id of the corresponding index file
     private final TST<Integer> termPostingPath;
+    private TST<String> reversedTermPostingPath;
     private static final IndexServer INSTANCE = new IndexServer();
     private static final Morphology MORPH = new Morphology();
 
@@ -74,7 +77,7 @@ public class IndexServer {
 
     // phrase index is removed, so at this stage there is no need for the enum but it will change
     public enum IndexType {
-        TERM, COORDINATE
+        TERM, COORDINATE, JOKER
     }
 
     public boolean containsElement(String term, IndexType type) {
@@ -108,7 +111,7 @@ public class IndexServer {
      * @param term element to search for
      * @param type type of index to search in
      * @return postings list or empty list if no postings found
-     */
+     */                // long operation!!!
     public ArrayList<Integer> getPostings(String term, IndexType type) {
         if (!containsElement(term, type)) throw new NoSuchElementException("No such element found!");
         String path;
@@ -139,6 +142,21 @@ public class IndexServer {
         throw new NoSuchElementException("index file is found but it does not contain the element specified");
     }
 
+    public Iterable<String> startWith(String prefix) {
+        return termPostingPath.keysWithPrefix(prefix);
+    }
+
+    public Iterable<String> endWith(String suffix) {
+        StringBuilder reverser = new StringBuilder(suffix.length());
+        reverser.append(suffix).reverse();
+        // TST returns sorted keys and so makes it inefficient to add them int another TST
+        Collection<String> reversed = reversedTermPostingPath.keysWithPrefix(reverser.toString());
+        List<String> straight = new ArrayList<>(reversed.size());
+        for (String rev : reversed)
+            straight.add(reversedTermPostingPath.get(rev));
+        return straight;
+    }
+
     public String getDocName(int docID) {
         return Paths.get(docId.inverse().get(docID)).getFileName().toString();
     }
@@ -164,8 +182,9 @@ public class IndexServer {
                 new Thread(new FileProcessor(Arrays.copyOfRange(documents, from, to))).start();
             }
             completion.await();
-            System.out.println("start transferMerge" + getTime());
+            System.out.println("start transferMerge: " + getTime());
             transferMerge();
+            buildReversed();
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -270,11 +289,6 @@ public class IndexServer {
                 oldVal.addAll(newVal);
                 return oldVal;
             });
-//            HashMap<Integer, ArrayList<Integer>> docCoords = dictionary.get(entry.getKey());
-//            if (docCoords.get(docId) == null) docCoords.put(docId, entry.getValue());
-//            else docCoords.get(docId).addAll(entry.getValue());
-//            if (entry.getKey().equals("unusuallylongwordaddedintentionally"))
-//                System.out.println(dictionary.get(entry.getKey()));
         }
     }
 
@@ -299,7 +313,7 @@ public class IndexServer {
         }
     }
 
-    // buggy
+    // buggy in memory
     private void transferMerge() throws IOException {
         saveParticles();
         dictionary = null;
@@ -307,7 +321,14 @@ public class IndexServer {
         PriorityQueue<InEntryTerm> termEntries = new PriorityQueue<>();
         BufferedReader[] readers = new BufferedReader[numStoredDictionaries];
         initReaders(termEntries, readers, numStoredDictionaries, TEMP_PARTICLES);
-        termMerge(termEntries, readers, TERM_INDEX_FLECKS, termPostingPath, TEMP_PARTICLES);
+        // use randomized queue to enable efficient construction of TST
+        RandomizedQueue<Tuple<String, Integer>> rq = new RandomizedQueue<>();
+        termMerge(termEntries, readers, TERM_INDEX_FLECKS, rq, TEMP_PARTICLES);
+        for (int i = 0; i < rq.size(); i++) {
+            Tuple<String, Integer> postPath = rq.dequeue();
+            termPostingPath.put(postPath.getV1(), postPath.getV2());
+        }
+
     }
 
     private void initReaders(PriorityQueue<InEntryTerm> entries, BufferedReader[] readers,
@@ -318,27 +339,23 @@ public class IndexServer {
             readers[i] = new BufferedReader(new FileReader(new File(pathName)));
             checkLine = readers[i].readLine();
             if (checkLine != null) entries.add(new InEntryTerm(i, checkLine));
+            else readers[i].close();
         }
     }
 
+    // causes OutOfMemory error (termPostingPath takes too much space)
     private void termMerge(PriorityQueue<InEntryTerm> entries, BufferedReader[] readers,
-                           String outPath, TST<Integer> postingPath, String primaryPath) throws IOException {
+                           String outPath, RandomizedQueue<Tuple<String, Integer>> postingPaths, String primaryPath) throws IOException {
         int numWritten = 0;
         // initialize writer for the first dictionary fleck
         String pathName = String.format(outPath, numWritten);
         BufferedWriter bw = new BufferedWriter(new FileWriter(new File(pathName)));
 
-        while (true) {
-            if (entries.isEmpty()) {
-                bw.flush();
-                bw.close();
-                break;
-            }
-
+        while (!entries.isEmpty()) {
             InEntryTerm nextEntry = entries.poll();
             HashMap<Integer, ArrayList<Integer>> docCoords = new HashMap<>();
             addDocCoords(entries, readers, nextEntry, docCoords, primaryPath);
-            postingPath.put(nextEntry.getTerm(), numWritten);
+            postingPaths.enqueue(new Tuple<>(nextEntry.getTerm(), numWritten));
             // check '!entries.isEmpty()' eliminates NullPointerException
             // find and process current term in all files
             while (!entries.isEmpty() && nextEntry.getTerm().equals(entries.peek().getTerm()))
@@ -353,12 +370,12 @@ public class IndexServer {
                 bw.close();
                 pathName = String.format(outPath, ++numWritten);
                 bw = new BufferedWriter(new FileWriter(new File(pathName)));
-                System.gc();
             }
         }
+        bw.flush();
+        bw.close();
     }
 
-    // causes OutOfMemory error
     private String coordsToString(HashMap<Integer, ArrayList<Integer>> docCoords) {
         StringBuilder resStr = new StringBuilder();
         for (Map.Entry<Integer, ArrayList<Integer>> entry : docCoords.entrySet()) {
@@ -370,6 +387,12 @@ public class IndexServer {
         return resStr.toString();
     }
 
+    /**
+     * parses string representation of term's docID-coords set into a map
+     *
+     * @param line representing line postings with associated coordinates
+     * @return HashMap of posting-coords sets
+     */
     private Map<Integer, ArrayList<Integer>> parseCoords(String line) {
         String[] spl_1 = line.split(DP_SEPARATOR); // 0th is the term then docID-positions sets
         Map<Integer, ArrayList<Integer>> result = new HashMap<>();
@@ -387,7 +410,6 @@ public class IndexServer {
     private void addDocCoords(PriorityQueue<InEntryTerm> entries, BufferedReader[] readers,
                               InEntryTerm nextEntry, Map<Integer, ArrayList<Integer>> docCoords, String primaryPath)
             throws IOException {
-        // TODO: check possible null ptr
         for (Map.Entry<Integer, ArrayList<Integer>> coords : nextEntry.getDocCoords().entrySet())
             docCoords.merge(coords.getKey(), coords.getValue(), (oldV, newV) -> {
                 oldV.addAll(newV);
@@ -502,6 +524,16 @@ public class IndexServer {
         }
     }
 
+    private void buildReversed() {
+        reversedTermPostingPath = new TST<>();
+        StringBuilder reverser = new StringBuilder(15);
+        for (String key : termPostingPath.keys()) {
+            reverser.append(key);
+            reverser.reverse();
+            reversedTermPostingPath.put(reverser.toString(), key);
+            reverser.setLength(0);
+        }
+    }
 
     private long startTime = System.currentTimeMillis();
 
@@ -515,4 +547,28 @@ public class IndexServer {
     }
 }
 
+class Tuple<T, E> {
+    private T v1;
+    private E v2;
 
+    public Tuple(T v1, E v2) {
+        this.v1 = v1;
+        this.v2 = v2;
+    }
+
+    public T getV1() {
+        return v1;
+    }
+
+    public void setV1(T v1) {
+        this.v1 = v1;
+    }
+
+    public E getV2() {
+        return v2;
+    }
+
+    public void setV2(E v2) {
+        this.v2 = v2;
+    }
+}

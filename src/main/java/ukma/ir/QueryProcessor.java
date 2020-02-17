@@ -14,6 +14,7 @@ public class QueryProcessor {
      * @return list of documents that match a given query
      */
     public List<String> processBooleanQuery(String q) {
+        if (!q.matches("\\w[\\w\\s]*")) throw new IllegalArgumentException("incorrect input");
         Set<Integer> reminders = new HashSet<>();
         Arrays.stream(q.split(" OR "))
                 .map(union -> union.split(" AND "))
@@ -56,10 +57,10 @@ public class QueryProcessor {
     }
 
     public List<String> processPositionalQuery(String query) throws IOException {
-        if (!query.trim().matches("\\w+(\\s+/\\d+\\s+\\w+)*")) throw new IllegalArgumentException("Wrong input format");
+        if (!query.matches("\\w+(\\s+/\\d+\\s+\\w+)*")) throw new IllegalArgumentException("Wrong input format");
         String[] tokens = query.trim().split("\\s+");
-        String[] terms = new String[tokens.length/2 + 1];
-        int[] distance = new int[tokens.length/2];
+        String[] terms = new String[tokens.length / 2 + 1];
+        int[] distance = new int[tokens.length / 2];
 
         for (int i = 0, j = 0; i < tokens.length; j++, i += 2) {
             terms[j] = IndexServer.normalize(tokens[i]);
@@ -71,7 +72,7 @@ public class QueryProcessor {
 
         Set<Integer> relevant = new TreeSet<>();
         for (int i = 0; i + 1 < terms.length; i++)
-            positionalIntersect(terms[i], terms[i+1], distance[i])
+            positionalIntersect(terms[i], terms[i + 1], distance[i])
                     .forEach(arr -> relevant.add(arr[0]));
 
         return relevant.stream().map(indexService::getDocPath).map(Path::getFileName)
@@ -84,7 +85,7 @@ public class QueryProcessor {
         Map<Integer, ArrayList<Integer>> docCoordMap2 = indexService.getTermDocCoord(t2);
         Integer[] docs1 = docCoordMap1.keySet().toArray(new Integer[0]);
         Integer[] docs2 = docCoordMap2.keySet().toArray(new Integer[0]);
-        for (int i = 0, j = 0; i < docs1.length && j < docs2.length;) {
+        for (int i = 0, j = 0; i < docs1.length && j < docs2.length; ) {
             if (docs1[i].equals(docs2[j])) {
                 Queue<Integer> candidates = new ArrayDeque<>();
                 ArrayList<Integer> coords1 = docCoordMap1.get(docs1[i]);
@@ -98,9 +99,9 @@ public class QueryProcessor {
                     for (int k = 0; k < candidates.size()/* && k < 10*/; k++)
                         answer.add(new int[]{docs1[i], pos1, candidates.remove()});
                 }
-                i++; j++;
-            }
-            else if (docs1[i].compareTo(docs2[j]) < 0) i++;
+                i++;
+                j++;
+            } else if (docs1[i].compareTo(docs2[j]) < 0) i++;
             else j++;
         }
         return answer;
@@ -117,8 +118,7 @@ public class QueryProcessor {
             if (basePost[baseIndex].equals(post[anotherIndex])) {
                 res.add(basePost[baseIndex++]);
                 anotherIndex++;
-            }
-            else if (basePost[baseIndex].compareTo(post[anotherIndex]) > 0) {
+            } else if (basePost[baseIndex].compareTo(post[anotherIndex]) > 0) {
                 int skippedIndex = anotherIndex + newLeap;
                 if (skippedIndex < post.length && basePost[baseIndex].compareTo(post[skippedIndex]) >= 0)
                     do {
@@ -137,5 +137,65 @@ public class QueryProcessor {
             }
         }
         return res;
+    }
+
+    // a*b*c && *abc && abc*
+    // NOT *abc* || ab**c
+    // TODO: use simple boolean retrieval to facilitate mixed search
+    public Collection<String> processJokerQuery(String query) {
+        String[] tokens = query.split("\\s+");
+        for (String token : tokens)
+            if (!token.matches("(\\*\\w+(\\*\\w+)?)|(\\w+\\*\\w*(\\w\\*\\w*)?)"))
+                throw new IllegalArgumentException('"' + query + '"' + " is not a valid joker query");
+
+        for (int i = 0; i < tokens.length; i++)
+            tokens[i] = tokens[i].toLowerCase(); // stemmer: searchings -> searching; searching -> search
+
+        Set<Integer> validFiles = new HashSet<>();
+        for (String term : tokens) {
+            Set<Integer> termContribution = new HashSet<>();
+            Set<String> matchPref = new TreeSet<>();
+            Set<String> matchSuf = new TreeSet<>();
+
+            if (term.charAt(0) != '*') {
+                for (String pref : indexService.startWith(term.substring(0, term.indexOf("*"))))
+                    matchPref.add(pref);
+                // no terms match given non-empty prefix
+                if (matchPref.isEmpty()) return new ArrayList<>(0);
+            }
+
+            if (term.charAt(term.length() - 1) != '*') {
+                for (String suf : indexService.endWith(term.substring(term.lastIndexOf('*') + 1)))
+                    matchSuf.add(suf);
+                if (matchSuf.isEmpty()) return new ArrayList<>(0);
+            }
+
+            Set<String> primeMatch;
+            if (matchPref.isEmpty())
+                primeMatch = matchSuf;
+            else if (matchSuf.isEmpty())
+                primeMatch = matchPref;
+            else {
+                matchPref.retainAll(matchSuf);
+                primeMatch = matchPref;
+            }
+
+            Collection<String> valid;
+            if (term.indexOf('*') != term.lastIndexOf('*')) {
+                String pattern = ".*" + term.substring(term.indexOf('*') + 1, term.lastIndexOf('*')) + ".*";
+                valid = primeMatch.stream().filter(t -> t.matches(pattern)).collect(Collectors.toList());
+            } else valid = primeMatch;
+
+            for (String v : valid)
+                termContribution.addAll(indexService.getPostings(v, IndexServer.IndexType.TERM));
+
+            if (validFiles.isEmpty()) validFiles.addAll(termContribution); // set base
+            else validFiles.retainAll(termContribution); // intersect
+            if (validFiles.isEmpty()) return new ArrayList<>(0); // check for empty intersection
+        }
+        List<String> result = new ArrayList<>();
+        for (Integer docID : validFiles)
+            result.add(indexService.getDocName(docID));
+        return result;
     }
 }
