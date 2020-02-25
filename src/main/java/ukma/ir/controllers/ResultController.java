@@ -1,4 +1,4 @@
-package ukma.ir.Controllers;
+package ukma.ir.controllers;
 
 import javafx.collections.ObservableList;
 import javafx.fxml.FXML;

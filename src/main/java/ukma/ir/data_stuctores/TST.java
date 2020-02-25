@@ -2,14 +2,15 @@ package ukma.ir.data_stuctores;
 
 import java.io.Serializable;
 import java.util.*;
-import java.util.stream.Stream;
 
 public class TST<Value> implements Serializable {
     private int n;              // size
     private Node<Value> root;   // root of TST
 
     private static class Node<Value> implements Serializable {
-        private char c;                        // character
+        //private char c;                        // character
+        // for the purpose of this project only ascii chars are allowed
+        private byte c;                        // character
         private Node<Value> left, mid, right;  // left, middle, and right subtries
         private Value val;                     // value associated with string
     }
@@ -95,7 +96,7 @@ public class TST<Value> implements Serializable {
         char c = key.charAt(d);
         if (x == null) {
             x = new Node<>();
-            x.c = c;
+            x.c = (byte)c;
         }
         if (c < x.c) x.left = put(x.left, key, val, d);
         else if (c > x.c) x.right = put(x.right, key, val, d);

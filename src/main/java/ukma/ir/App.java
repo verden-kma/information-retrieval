@@ -4,10 +4,8 @@ import javafx.application.Application;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
-import ukma.ir.Controllers.MainController;
-import ukma.ir.Controllers.ResultController;
-
-import static ukma.ir.IndexServer.normalize;
+import ukma.ir.controllers.MainController;
+import ukma.ir.controllers.ResultController;
 
 public class App extends Application {
     private Scene mainScene, resultScene;

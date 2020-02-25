@@ -5,3 +5,4 @@ target
 infoSearch.iml
 src/main/java/ukma/ir/pt_incidence_matrix/MatrixBuilder.java
 *.idom
+garbage-collection.log
