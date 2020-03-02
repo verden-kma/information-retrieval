@@ -24,7 +24,7 @@ public class IndexServer {
     private static final String TERM_INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
     private static final long WORKERS_MEMORY_LIMIT = Math.round(Runtime.getRuntime().maxMemory() * 0.5);
     private static final long MAX_MEMORY_LOAD = Math.round(Runtime.getRuntime().maxMemory() * 0.7);
-    private static final char TERM_DOC_SEP = ':'; // TERM_DOC
+    private static final char NEXT_DOC_SEP = ':'; // TERM_DOC
     private static final char DOC_COORD_SEP = '>'; // DOC_COORDINATE
     private static final char COORD_SEP = ' ';
 //    private static final String TERM_PATHS = "data/cache/term.bin";
@@ -42,7 +42,6 @@ public class IndexServer {
     private final CountDownLatch completion = new CountDownLatch(WORKERS);
     // hash function is effective for Integer
     private TreeMap<String, HashMap<Integer, ArrayList<Integer>>> dictionary;
-    private Set<String> vocabulary;
     private static final Object locker = new Object();
 
     private IndexServer() {
@@ -112,9 +111,9 @@ public class IndexServer {
             String search = br.readLine();
             while (search != null) {
                 if (search.startsWith(term)) {
-                    String postings = search.substring(search.indexOf(TERM_DOC_SEP) + 1); // length of a char
+                    String postings = search.substring(search.indexOf(NEXT_DOC_SEP) + 1); // length of a char
                     ArrayList<Integer> pList = new ArrayList<>();
-                    for (String docID : postings.split(valueOf(TERM_DOC_SEP)))
+                    for (String docID : postings.split(valueOf(NEXT_DOC_SEP)))
                         pList.add(Integer.parseInt(docID.substring(0, docID.indexOf(DOC_COORD_SEP))));
                     return pList;
                 }
@@ -169,7 +168,7 @@ public class IndexServer {
             completion.await();
             System.out.println("start transferMerge: " + getTime());
             transferMerge();
-            //System.out.println("start building REVERSED");
+            System.out.println("start building REVERSED");
             //buildReversed();
         } catch (Exception e) {
             e.printStackTrace();
@@ -191,9 +190,8 @@ public class IndexServer {
         public void run() {
             Morphology morph = new Morphology();
             Map<String, ArrayList<Integer>> vocabulary;
-//            List<OutEntry> outers = new ArrayList<>();
+            //List<OutEntry> outers = new ArrayList<>();
             for (File docFile : files) {
-
                 vocabulary = new TreeMap<>();
                 int docID = docId.get(docFile.toString());
                 TermProvider terms = new TermProvider(docFile, morph);
@@ -206,10 +204,10 @@ public class IndexServer {
                     Runtime rt = Runtime.getRuntime();
                     if (rt.maxMemory() - rt.freeMemory() > WORKER_MEMORY) {
                         mergeOut(new OutEntry(docID, vocabulary.entrySet()));
-//                        outers.add(new OutEntry(docID, vocabulary.entrySet()));
-//                        mergeOut(outers);
+                        //outers.add(new OutEntry(docID, vocabulary.entrySet()));
+                        //mergeOut(outers);
                         /* outers.clear(); breaks correctness*/
-//                        outers = new ArrayList<>();
+                        //outers = new ArrayList<>();
                         vocabulary = new TreeMap<>();
                     }
                 }
@@ -242,26 +240,24 @@ public class IndexServer {
         replenishDictionary(dictionary, microMaps.getVocabulary(), microMaps.getDocId());
         Runtime rt = Runtime.getRuntime();
         if (rt.maxMemory() - rt.freeMemory() > MAX_MEMORY_LOAD) {
-            //System.out.println("mergeOut save: " + showMemory());
             saveParticles();
-            //System.out.println("saved: " + showMemory());
         }
     }
 
-//    /** IMPORTANT IDEA, DO NOT DELETE!!!
+//    /**
+//     * IMPORTANT IDEA, DO NOT DELETE!!!
 //     * merges small local dictionaries into a big global
 //     *
 //     * @param microMaps - list of particle of dictionary built during a processing period
 //     */
 //    private synchronized void mergeOut(List<OutEntry> microMaps) {
-//        for (OutEntry out : microMaps) {
+//        while (!microMaps.isEmpty()) {
+//            OutEntry out = microMaps.get(microMaps.size() - 1);
 //            replenishDictionary(dictionary, out.getVocabulary(), out.getDocId());
-//
+//            microMaps.remove(microMaps.size() - 1); // clear unnecessary memory
 //            Runtime rt = Runtime.getRuntime();
 //            if (rt.maxMemory() - rt.freeMemory() > MAX_MEMORY_LOAD) {
-//                //System.out.println("mergeOut save: " + showMemory());
 //                saveParticles();
-//                //System.out.println("saved: " + showMemory());
 //            }
 //        }
 //    }
@@ -280,7 +276,6 @@ public class IndexServer {
     private void saveParticles() {
         String pathNameDict = String.format(TEMP_PARTICLES, numStoredDictionaries++);
         writeTerms(pathNameDict, dictionary);
-        vocabulary.addAll(dictionary.keySet()); // check memory errors
         dictionary = new TreeMap<>();
         System.gc();
     }
@@ -289,9 +284,22 @@ public class IndexServer {
         try (BufferedWriter bw = new BufferedWriter(new FileWriter(new File(path)))) {
             for (Map.Entry<String, HashMap<Integer, ArrayList<Integer>>> entry : dictionary.entrySet()) {
                 bw.write(entry.getKey());
-                for (Integer docID : entry.getValue().keySet())
-                    bw.write(TERM_DOC_SEP + docID + DOC_COORD_SEP
-                            + entry.getValue().get(docID).toString().replaceAll("[\\[,\\]]", ""));
+
+                for (Integer docID : new TreeSet<>(entry.getValue().keySet())) {
+                    bw.write(NEXT_DOC_SEP);
+                    bw.write(valueOf(docID));
+                    bw.write(DOC_COORD_SEP);
+//                    Iterator<Integer> postings = entry.getValue().get(docID).iterator();
+//                    if (postings.hasNext()) {
+//                        while (true) {
+//                            bw.write(valueOf(postings.next()));
+//                            if (!postings.hasNext()) break;
+//                            bw.write(COORD_SEP);
+//                        }
+//                    }
+//                    entry.getValue().remove(docID);
+                    bw.write(entry.getValue().get(docID).toString().replaceAll("[\\[,\\]]", ""));
+                }
                 bw.newLine();
             }
         } catch (IOException e) {
@@ -305,77 +313,92 @@ public class IndexServer {
 
         RandomizedQueue<Tuple<String, Integer>> tstElems = new RandomizedQueue<>();
         int numFlecks = 0;
-        int numTermsPerFleck = (int) Math.sqrt(vocabulary.size());
-        vocabulary = null;
+        int numTermsPerFleck = 1000;//(int) Math.sqrt(vocabulary.size());
         String path = String.format(TERM_INDEX_FLECKS, numFlecks);
         BufferedWriter fleck = new BufferedWriter(new FileWriter(new File(path)));
 
-        PriorityQueue<PTP> particleTermsPQ = initPTP();
-        for (int i = 0; !particleTermsPQ.isEmpty(); i++) {
-            if (i > numTermsPerFleck) { // each fleck contains no more then sqrt() terms
+        System.out.println("Start transfer Merge");
+
+        PriorityQueue<PTP> termsPQ = initPTP();
+        for (int i = 0; !termsPQ.isEmpty(); i++) {
+            if (i > numTermsPerFleck) { // each fleck contains no more than sqrt() terms
                 path = String.format(TERM_INDEX_FLECKS, ++numFlecks);
                 fleck.close();
                 fleck = new BufferedWriter(new FileWriter(new File(path)));
                 i = 0;
             }
-            PTP termHead = particleTermsPQ.poll();
-            tstElems.enqueue(new Tuple<>(termHead.getCurrTerm(), numFlecks));
 
+            for (PTP p : termsPQ)
+                assert p.getCurrState() == PTP.State.DOC_ID;
+            PTP termHead = termsPQ.poll();
+            assert termHead != null;
+            tstElems.enqueue(new Tuple<>(termHead.getCurrTerm(), numFlecks));
             PriorityQueue<PTP> docIdPQ = new PriorityQueue<>(PTP.getComparator(PTP.State.DOC_ID));
             termHead.getNext();
+
             docIdPQ.add(termHead);
-            while (!particleTermsPQ.isEmpty() && termHead.equalsTerm(particleTermsPQ.peek())) {// come through all terms
-                PTP sameDocId = particleTermsPQ.poll();
-                sameDocId.getNext(); // state == post doc
-                docIdPQ.add(sameDocId); // there will be lots of elements but only few duplicates
-                                        // (customer's file was split into 2+ particles)
+            while (!termsPQ.isEmpty() && termHead.equalsTerm(termsPQ.peek())) {// come through all terms
+                PTP sameTerm = termsPQ.poll();
+                assert sameTerm != null;
+                sameTerm.getNext(); // state == post doc
+                docIdPQ.add(sameTerm); // there will be lots of elements but only few duplicates
+                // (customer's file was split into 2+ particles)
             }
+
+            for (PTP p : docIdPQ)
+                assert p.getCurrState() == PTP.State.POSITION;
 
             // they will all have the same term
             fleck.write(termHead.getCurrTerm());
-            fleck.write(TERM_DOC_SEP);
 
-            PriorityQueue<PTP> posPQ = new PriorityQueue<>(PTP.getComparator(PTP.State.POSITION));
-            PTP docIdHead = docIdPQ.poll();
-            docIdHead.getNext();
-            posPQ.add(docIdHead);
             while (!docIdPQ.isEmpty()) {
-                while (!docIdPQ.isEmpty() && /*if duplicate is present*/ docIdHead.equalsDocId(docIdPQ.peek())) {// come through all docs of current term
-                    PTP diffPosition = docIdPQ.poll();
-                    diffPosition.getNext(); // state == post pos (possible term or doc or EOF)
-                    posPQ.add(diffPosition);
+                PriorityQueue<PTP> posPQ = new PriorityQueue<>(PTP.getComparator(PTP.State.POSITION));
+                PTP docIdHead = docIdPQ.poll();
+                assert docIdHead != null;
+                docIdHead.getNext();
+                posPQ.add(docIdHead);
+                while (!docIdPQ.isEmpty() && docIdHead.equalsDocId(docIdPQ.peek())) {// come through all docs of current term
+                    PTP sameDocId = docIdPQ.poll();
+                    assert sameDocId != null;
+                    sameDocId.getNext(); // state == post pos (possible term or docId or EOF)
+                    posPQ.add(sameDocId);
                 }
-
-                //TODO: further code is buggy: no correct ending for merged line of term postings, no addition of non-empty PTPs to their queues
-
-                fleck.write(termHead.getCurrDocID());
+                fleck.write(NEXT_DOC_SEP);
+                fleck.write(valueOf(docIdHead.getCurrDocID()));
                 fleck.write(DOC_COORD_SEP);
 
-                while (!posPQ.isEmpty()) { // come through all coords of current doc
+                while (true) { // come through all coords of current doc
                     PTP nextPos = posPQ.poll();
-                    fleck.write(nextPos.getCurrPos());
-                    fleck.write(COORD_SEP);
+                    assert nextPos != null; // nextPos cannot be null because at least docIdHead is in posPQ
+                    fleck.write(valueOf(nextPos.getCurrPos()));
 
                     while (nextPos.getCurrState() == PTP.State.POSITION) {
-                        fleck.write(nextPos.getNext());
                         fleck.write(COORD_SEP);
+                        fleck.write(valueOf(nextPos.getNext()));
                     }
 
                     switch (nextPos.getCurrState()) {
                         case TERM:
-                            nextPos.getNext(); // switch to the next state
-                            particleTermsPQ.add(nextPos);
+                            nextPos.getNext(); // switch to the post-TERM state (update term)
+                            termsPQ.add(nextPos);
+                            break;
                         case DOC_ID:
-                            nextPos.getNext(); // switch to the next state
+                            nextPos.getNext(); // switch to the post-DOC_ID state (update docId)
                             docIdPQ.add(nextPos);
+                            break;
                         case EOF:
-                            System.out.println("processed next dp");
+                            break;
                     }
-
+                    if (posPQ.isEmpty()) break;
+                    fleck.write(COORD_SEP);
                 }
-
             }
-
+            fleck.newLine();
+        }
+        while (!tstElems.isEmpty()) {
+            Tuple<String, Integer> t = tstElems.dequeue();
+            termPostingPath.put(t.getV1(), t.getV2());
+            System.out.println(showMemory());
         }
     }
 
@@ -389,7 +412,6 @@ public class IndexServer {
         return ptpPQ;
     }
 
-
     static class PTP {
 
         // ParticleTokenProvider
@@ -397,17 +419,21 @@ public class IndexServer {
             TERM, DOC_ID, POSITION, EOF
         }
 
+        private static final boolean isWindows = System.lineSeparator().length() != 1;
         private final StringBuilder builder = new StringBuilder();
         private final BufferedReader br;
         private State currentState;
         private String cTerm;
-        private String cDocID;
-        private String cPos;
+        private int cDocID;
+        private int cPos;
         private String nextTerm;
+
+        private String path;
 
         PTP(File particle) throws IOException {
             br = new BufferedReader(new FileReader(particle));
             currentState = State.TERM;
+            path = particle.getPath();
         }
 
         String getNext() {
@@ -418,46 +444,51 @@ public class IndexServer {
             }
         }
 
+
         private String fill() throws IOException {
-            assert nextTerm == null || (currentState == State.TERM);
+            //assert nextTerm == null || (currentState == State.TERM);
 
             if (nextTerm != null && currentState == State.TERM) {
-                String res = nextTerm;
+                cTerm = nextTerm;
                 nextTerm = null;
                 currentState = State.DOC_ID;
-                return res;
+                return cTerm;
             }
 
             char nextChar = (char) br.read();
             if (nextChar == (char) -1) return null;
-            while (nextChar != TERM_DOC_SEP && nextChar != DOC_COORD_SEP && nextChar != COORD_SEP
-                    && nextChar != '\n' && nextChar != (char) -1) {
+            while (nextChar != NEXT_DOC_SEP && nextChar != DOC_COORD_SEP && nextChar != COORD_SEP
+                    && nextChar != System.lineSeparator().charAt(0) && nextChar != (char) -1) {
                 builder.append(nextChar);
                 nextChar = (char) br.read();
             }
 
             String update = builder.toString();
-            if (currentState == State.EOF) return nextTerm = update;
+            if (currentState == State.EOF) {
+                builder.setLength(0);
+                return nextTerm = update;
+            }
 
             switch (currentState) {
                 case TERM:
-                    assert (nextChar == TERM_DOC_SEP);
+                    assert (nextChar == NEXT_DOC_SEP);
                     cTerm = update;
                     currentState = State.DOC_ID;
                     break;
                 case DOC_ID:
                     assert (nextChar == DOC_COORD_SEP);
-                    cDocID = update;
+                    cDocID = Integer.parseInt(update);
                     currentState = State.POSITION;
                     break;
                 case POSITION:
-                    cPos = update;
-                    if (nextChar == TERM_DOC_SEP) currentState = State.DOC_ID;
                     assert (nextChar != DOC_COORD_SEP);
+                    cPos = Integer.parseInt(update);
+                    if (nextChar == NEXT_DOC_SEP) currentState = State.DOC_ID;
                     break;
             }
             builder.setLength(0);
-            if (nextChar == '\n') {
+            if (nextChar == System.lineSeparator().charAt(0)) {
+                if (isWindows) br.skip(1);
                 // suspect EOF, if not EOF then save next term and change state to TERM
                 // read saved term with next invocation
                 currentState = State.EOF;
@@ -470,7 +501,7 @@ public class IndexServer {
         static Comparator<PTP> getComparator(State mode) {
             switch (mode) {
                 case TERM:
-                    Comparator.comparing(PTP::getCurrTerm);
+                    return Comparator.comparing(PTP::getCurrTerm);
                 case DOC_ID:
                     return Comparator.comparing(PTP::getCurrDocID);
                 case POSITION:
@@ -484,8 +515,8 @@ public class IndexServer {
             return cTerm.equals(peek.cTerm);
         }
 
-        public boolean equalsDocId(PTP peek) {
-            return cDocID.equals(peek.cDocID);
+        boolean equalsDocId(PTP peek) {
+            return cDocID == peek.cDocID;
         }
 
         State getCurrState() {
@@ -496,92 +527,14 @@ public class IndexServer {
             return cTerm;
         }
 
-        String getCurrDocID() {
+        int getCurrDocID() {
             return cDocID;
         }
 
-        String getCurrPos() {
+        int getCurrPos() {
             return cPos;
         }
     }
-
-//    // buggy in memory
-//    //TODO: rewrite
-//    private void transferMerge() throws IOException {
-//        saveParticles();
-//        dictionary = null;
-//        // open reader for each particle and maintain priority queue for each particle on disk
-//        PriorityQueue<InEntryTerm> termEntries = new PriorityQueue<>();
-//        BufferedReader[] readers = new BufferedReader[numStoredDictionaries];
-//        initReaders(termEntries, readers, numStoredDictionaries, TEMP_PARTICLES);
-//        // use randomized queue to enable efficient construction of TST
-//        RandomizedQueue<Tuple<String, Integer>> rq = new RandomizedQueue<>();
-//        termMerge(termEntries, readers, TERM_INDEX_FLECKS, rq, TEMP_PARTICLES);
-//        for (int i = 0; i < rq.size(); i++) {
-//            Tuple<String, Integer> postPath = rq.dequeue();
-//            termPostingPath.put(postPath.getV1(), postPath.getV2());
-//        }
-//    }
-//
-//    private void initReaders(PriorityQueue<InEntryTerm> entries, BufferedReader[] readers,
-//                             int numStored, String particlesPath) throws IOException {
-//        String checkLine;
-//        for (int i = 0; i < numStored; i++) {
-//            String pathName = String.format(particlesPath, i);
-//            readers[i] = new BufferedReader(new FileReader(new File(pathName)));
-//            checkLine = readers[i].readLine();
-//            if (checkLine != null) entries.add(new InEntryTerm(i, checkLine));
-//            else readers[i].close();
-//        }
-//    }
-//
-//    // causes OutOfMemory error (postingPaths takes too much space)
-//    private void termMerge(PriorityQueue<InEntryTerm> entries, BufferedReader[] readers,
-//                           String outPath, RandomizedQueue<Tuple<String, Integer>> postingPaths, String primaryPath) throws IOException {
-//        int numWritten = 0;
-//        // initialize writer for the first dictionary fleck
-//        String pathName = String.format(outPath, numWritten);
-//        BufferedWriter bw = new BufferedWriter(new FileWriter(new File(pathName)));
-//
-//        while (!entries.isEmpty()) {
-//            InEntryTerm nextEntry = entries.poll();
-//
-//            System.out.println("Current term: " + nextEntry.getTerm());
-//
-//            HashMap<Integer, ArrayList<Integer>> docCoords = new HashMap<>();
-//            addDocCoords(entries, readers, nextEntry, docCoords, primaryPath);
-//            postingPaths.enqueue(new Tuple<>(nextEntry.getTerm(), numWritten));
-//            // check '!entries.isEmpty()' eliminates NullPointerException
-//            // find and process current term in all files
-//            while (!entries.isEmpty() && nextEntry.getTerm().equals(entries.peek().getTerm()))
-//                addDocCoords(entries, readers, entries.poll(), docCoords, primaryPath);
-//
-//            bw.write(nextEntry.getTerm() + coordsToString(docCoords));
-//            bw.newLine();
-//            Runtime rt = Runtime.getRuntime();
-//            if (rt.maxMemory() - rt.freeMemory() > MAX_MEMORY_LOAD) {
-//                System.out.println("Time to clean: " + System.currentTimeMillis() + COORD_SEP + showMemory());
-//                bw.flush();
-//                bw.close();
-//                pathName = String.format(outPath, ++numWritten);
-//                bw = new BufferedWriter(new FileWriter(new File(pathName)));
-//                System.gc();
-//            }
-//        }
-//        bw.flush();
-//        bw.close();
-//    }
-//
-//    private String coordsToString(HashMap<Integer, ArrayList<Integer>> docCoords) {
-//        StringBuilder resStr = new StringBuilder();
-//        for (Map.Entry<Integer, ArrayList<Integer>> entry : docCoords.entrySet()) {
-//            resStr.append(TERM_DOC_SEP).append(entry.getKey()).append(DOC_COORD_SEP);
-//            for (Integer coord : entry.getValue())
-//                resStr.append(coord).append(COORD_SEP);
-//            resStr.deleteCharAt(resStr.length() - 1);
-//        }
-//        return resStr.toString();
-//    }
 
     /**
      * parses string representation of term's docID-coords set into a map
@@ -590,7 +543,7 @@ public class IndexServer {
      * @return HashMap of posting-coords sets
      */
     private Map<Integer, ArrayList<Integer>> parseCoords(String line) {
-        String[] spl_1 = line.split(valueOf(TERM_DOC_SEP)); // 0th is the term then docID-positions sets
+        String[] spl_1 = line.split(valueOf(NEXT_DOC_SEP)); // 0th is the term then docID-positions sets
         Map<Integer, ArrayList<Integer>> result = new HashMap<>();
         for (int i = 1; i < spl_1.length; i++) {
             int coordStart = spl_1[i].indexOf(DOC_COORD_SEP);
@@ -601,22 +554,6 @@ public class IndexServer {
             result.put(Integer.parseInt(spl_1[i].substring(0, coordStart)), coordList);
         }
         return result;
-    }
-
-    private void addDocCoords(PriorityQueue<InEntryTerm> entries, BufferedReader[] readers,
-                              InEntryTerm nextEntry, Map<Integer, ArrayList<Integer>> docCoords, String primaryPath)
-            throws IOException {
-        for (Map.Entry<Integer, ArrayList<Integer>> coords : nextEntry.getDocCoords().entrySet())
-            docCoords.merge(coords.getKey(), coords.getValue(), (oldV, newV) -> {
-                oldV.addAll(newV);
-                return oldV;
-            });
-
-        String newLine = readers[nextEntry.getFileInd()].readLine();
-        if (newLine == null) {
-            readers[nextEntry.getFileInd()].close(); //delete file
-            // Files.delete(Paths.get(String.format(primaryPath, nextEntry.getFileInd())));
-        } else entries.add(new InEntryTerm(nextEntry.getFileInd(), newLine));
     }
 
     private class TermProvider {
@@ -689,36 +626,35 @@ public class IndexServer {
         }
     }
 
-
-    class InEntryTerm implements Comparable<InEntryTerm> {
-        private final int fileInd;
-        private final String term;
-        private final Map<Integer, ArrayList<Integer>> docCoords;
-
-        public InEntryTerm(int fInd, String line) {
-            fileInd = fInd;
-            term = line.substring(0, line.indexOf(TERM_DOC_SEP));
-            docCoords = parseCoords(line);
-        }
-
-        @Override
-        public int compareTo(InEntryTerm entry) {
-            if (entry == null) throw new IllegalArgumentException("entry is null");
-            return term.compareTo(entry.term);
-        }
-
-        public int getFileInd() {
-            return fileInd;
-        }
-
-        public String getTerm() {
-            return term;
-        }
-
-        public Map<Integer, ArrayList<Integer>> getDocCoords() {
-            return docCoords;
-        }
-    }
+//    class InEntryTerm implements Comparable<InEntryTerm> {
+//        private final int fileInd;
+//        private final String term;
+//        private final Map<Integer, ArrayList<Integer>> docCoords;
+//
+//        public InEntryTerm(int fInd, String line) {
+//            fileInd = fInd;
+//            term = line.substring(0, line.indexOf(NEXT_DOC_SEP));
+//            docCoords = parseCoords(line);
+//        }
+//
+//        @Override
+//        public int compareTo(InEntryTerm entry) {
+//            if (entry == null) throw new IllegalArgumentException("entry is null");
+//            return term.compareTo(entry.term);
+//        }
+//
+//        public int getFileInd() {
+//            return fileInd;
+//        }
+//
+//        public String getTerm() {
+//            return term;
+//        }
+//
+//        public Map<Integer, ArrayList<Integer>> getDocCoords() {
+//            return docCoords;
+//        }
+//    }
 
     private void buildReversed() {
         reversedTermPostingPath = new TST<>();

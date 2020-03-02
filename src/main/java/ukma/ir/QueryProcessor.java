@@ -30,15 +30,15 @@ public class QueryProcessor {
                     // i.e. input is not empty
                     // then set posting for this term as a base for further intersections
                     // else do no intersection as the result is empty if any entry is empty
-                    Set<Integer> inDocs = new HashSet<>();
+                    Set<Integer> inDocs;
                     if (!includeTerms.isEmpty() && indexService.containsElement(includeTerms.get(0), IndexServer.IndexType.TERM)) {
-                        inDocs.addAll(indexService.getPostings(includeTerms.get(0), IndexServer.IndexType.TERM)); // set base
+                        inDocs = new HashSet<>(indexService.getPostings(includeTerms.get(0), IndexServer.IndexType.TERM));
                         includeTerms.forEach(term -> {
                             ArrayList<Integer> posting = indexService.getPostings(term, IndexServer.IndexType.TERM);
                             if (posting != null) inDocs.retainAll(posting); // intersect
                         });
                     }
-
+                    else return;
                     Set<Integer> exDocs = new HashSet<>();
                     for (String term : excludeTerms) {
                         if (term == null) continue; // normalizer might return null
