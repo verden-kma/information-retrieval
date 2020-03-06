@@ -3,7 +3,6 @@ package ukma.ir;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import edu.stanford.nlp.process.Morphology;
-import ukma.ir.data_stuctores.RandomizedQueue;
 import ukma.ir.data_stuctores.TST;
 
 import javax.annotation.Nullable;
@@ -31,6 +30,10 @@ public class IndexServer {
 //    private static final String TERM_PATHS = "data/cache/term.bin";
 //    private static final String DOC_ID_PATH = "data/cache/docId.bin";
 
+    private int[][] dict; // 0th - start index of term, 1st - fleckID, 2nd - in-fleck of pos (1/2), 3rd - (2/2) 4rd - docFr
+    private int[][] revDict;
+    private String vocabStr;
+    private String reVocabStr;
     private final BiMap<String, Integer> docId; // path - docId
     // term - id of the corresponding index file
     private final TST<Integer> termPostingPath;
@@ -363,6 +366,7 @@ public class IndexServer {
                 assert p.getCurrState() == PTP.State.TERM_FR;
 
             // they will all have the same term
+            int deltaDocId = 0;
             while (!docIdPQ.isEmpty()) {
                 PriorityQueue<PTP> posPQ = new PriorityQueue<>(PTP.getComparator(PTP.State.POSITION));
                 PTP docIdHead = docIdPQ.poll();
@@ -380,18 +384,20 @@ public class IndexServer {
                     posPQ.add(sameDocId.getNext());
                 }
 
-                writtenBytes += intToFleck(fleck, docIdHead.getCurrDocID());
+                deltaDocId = docIdHead.getCurrDocID() - deltaDocId;
+                writtenBytes += intToFleck(fleck, deltaDocId);
                 writtenBytes += intToFleck(fleck, totalTermFr);
 
                 while (!posPQ.isEmpty()) { // come through all coords of current doc
                     PTP nextPos = posPQ.poll();
 
                     assert nextPos != null; // nextPos cannot be null because at least docIdHead is in posPQ
-
-                    writtenBytes += intToFleck(fleck, nextPos.getCurrPos());
+                    int deltaPos = nextPos.getCurrPos();
+                    writtenBytes += intToFleck(fleck, deltaPos);
 
                     while (nextPos.getCurrState() == PTP.State.POSITION) {
-                        writtenBytes += intToFleck(fleck, nextPos.getNext().getCurrPos());
+                        deltaPos = nextPos.getNext().getCurrPos() - deltaPos;
+                        writtenBytes += intToFleck(fleck, deltaPos);
                     }
 
                     switch (nextPos.getCurrState()) {
@@ -413,6 +419,85 @@ public class IndexServer {
         }
         Tuple[] sortedTuples = tuples.toArray(new Tuple[0]);
         Quick3string.sort(sortedTuples);
+        buildDictionary(sortedTuples);
+    }
+
+    private void buildDictionary(Tuple[] sortedTuples) {
+        StringBuilder vocabStr = new StringBuilder();
+        dict = new int[sortedTuples.length][5];
+        for (int i = 0; i < sortedTuples.length; i++) {
+            int[] termData = dict[i];
+            Tuple currTuple = sortedTuples[i];
+            termData[0] = vocabStr.length();
+            termData[1] = currTuple.getFleckID();
+            termData[2] = (int)(currTuple.getFleckPos() >> 32); //first 4 bytes
+            termData[3] = (int)currTuple.getFleckPos(); // last 4 bytes
+            termData[4] = currTuple.getDocFr();
+            vocabStr.append(currTuple.getTerm());
+        }
+        this.vocabStr = vocabStr.toString();
+
+        vocabStr.setLength(0);
+        CharSequence[] revTerms = new CharSequence[sortedTuples.length];
+        char oldIndexSep = '%';
+        for (int i = 0; i < sortedTuples.length; i++) {
+            StringBuilder reverser = new StringBuilder(sortedTuples[i].getTerm().length() + 1 + intDigits(i));
+            reverser.append(sortedTuples[i].getTerm()).reverse().append(oldIndexSep).append(i);
+            sortedTuples[i] = null;
+            revTerms[i] = reverser;
+        }
+
+        Quick3string.sort(revTerms);
+        StringBuilder reVocabStr = new StringBuilder();
+        revDict = new int[revTerms.length][2];
+        for (int i = 0; i < revTerms.length; i++) {
+            revDict[i][0] = reVocabStr.length();
+            int sepIndex = -1;
+            while (revTerms[i].charAt(++sepIndex) != oldIndexSep);
+            revDict[i][1] = Integer.parseInt(revTerms[i].subSequence(sepIndex++, revTerms[i].length()).toString()); // java 9 ???
+            reVocabStr.append(revTerms[i].subSequence(0, sepIndex));
+        }
+        this.reVocabStr = reVocabStr.toString();
+    }
+
+    private int intDigits(int number) {
+        if (number < 100000) {
+            if (number < 100) {
+                if (number < 10) {
+                    return 1;
+                } else {
+                    return 2;
+                }
+            } else {
+                if (number < 1000) {
+                    return 3;
+                } else {
+                    if (number < 10000) {
+                        return 4;
+                    } else {
+                        return 5;
+                    }
+                }
+            }
+        } else {
+            if (number < 10000000) {
+                if (number < 1000000) {
+                    return 6;
+                } else {
+                    return 7;
+                }
+            } else {
+                if (number < 100000000) {
+                    return 8;
+                } else {
+                    if (number < 1000000000) {
+                        return 9;
+                    } else {
+                        return 10;
+                    }
+                }
+            }
+        }
     }
 
     private long intToFleck(BufferedOutputStream fleck, int number) throws IOException {
@@ -665,7 +750,7 @@ public class IndexServer {
 
     private void buildReversed() {
         reversedTermPostingPath = new TST<>();
-        StringBuilder reverser = new StringBuilder(15);
+        StringBuilder reverser = new StringBuilder();
         for (String key : termPostingPath.keys()) {
             reverser.append(key);
             reverser.reverse();
@@ -688,7 +773,7 @@ public class IndexServer {
 }
 
 
-class Tuple {
+class Tuple implements CharSequence{
     private final String term;
     private final int fleckID;
     private final long fleckPos;
@@ -721,6 +806,21 @@ class Tuple {
     public long getFleckPos() {
         return fleckPos;
     }
+
+    @Override
+    public int length() {
+        return term.length();
+    }
+
+    @Override
+    public char charAt(int index) {
+        return term.charAt(index);
+    }
+
+    @Override
+    public CharSequence subSequence(int start, int end) {
+        return term.subSequence(start, end);
+    }
 }
 
 class Quick3string {
@@ -735,21 +835,21 @@ class Quick3string {
      *
      * @param a the array to be sorted
      */
-    public static void sort(Tuple[] a) {
+    public static void sort(CharSequence[] a) {
         shuffle(a);
         sort(a, 0, a.length - 1, 0);
         assert isSorted(a);
     }
 
     // return the dth character of s, -1 if d = length of s
-    private static int charAt(Tuple s, int d) {
-        assert d >= 0 && d <= s.getTerm().length();
-        if (d == s.getTerm().length()) return -1;
-        return s.getTerm().charAt(d);
+    private static int charAt(CharSequence s, int d) {
+        assert d >= 0 && d <= s.length();
+        if (d == s.length()) return -1;
+        return s.charAt(d);
     }
 
     // 3-way string quicksort a[lo..hi] starting at dth character
-    private static void sort(Tuple[] a, int lo, int hi, int d) {
+    private static void sort(CharSequence[] a, int lo, int hi, int d) {
 
         // cutoff to insertion sort for small subarrays
         if (hi <= lo + CUTOFF) {
@@ -774,33 +874,33 @@ class Quick3string {
     }
 
     // sort from a[lo] to a[hi], starting at the dth character
-    private static void insertion(Tuple[] a, int lo, int hi, int d) {
+    private static void insertion(CharSequence[] a, int lo, int hi, int d) {
         for (int i = lo; i <= hi; i++)
             for (int j = i; j > lo && less(a[j], a[j - 1], d); j--)
                 exch(a, j, j - 1);
     }
 
     // exchange a[i] and a[j]
-    private static void exch(Tuple[] a, int i, int j) {
-        Tuple temp = a[i];
+    private static void exch(CharSequence[] a, int i, int j) {
+        CharSequence temp = a[i];
         a[i] = a[j];
         a[j] = temp;
     }
 
     // is v less than w, starting at character d
-    private static boolean less(Tuple v, Tuple w, int d) {
-        assert v.getTerm().substring(0, d).equals(w.getTerm().substring(0, d));
-        for (int i = d; i < Math.min(v.getTerm().length(), w.getTerm().length()); i++) {
-            if (v.getTerm().charAt(i) < w.getTerm().charAt(i)) return true;
-            if (v.getTerm().charAt(i) > w.getTerm().charAt(i)) return false;
+    private static boolean less(CharSequence v, CharSequence w, int d) {
+        assert v.toString().substring(0, d).equals(w.toString().substring(0, d));
+        for (int i = d; i < Math.min(v.length(), w.length()); i++) {
+            if (v.charAt(i) < w.charAt(i)) return true;
+            if (v.charAt(i) > w.charAt(i)) return false;
         }
-        return v.getTerm().length() < w.getTerm().length();
+        return v.length() < w.length();
     }
 
     // is the array sorted
-    private static boolean isSorted(Tuple[] a) {
+    private static boolean isSorted(CharSequence[] a) {
         for (int i = 1; i < a.length; i++)
-            if (a[i].getTerm().compareTo(a[i - 1].getTerm()) < 0) return false;
+            if (a[i].toString().compareTo(a[i - 1].toString()) < 0) return false;
         return true;
     }
 
