@@ -27,8 +27,7 @@ public class IndexServer {
     private static final char NEXT_DOC_SEP = ':'; // TERM_DOC
     private static final char DOC_COORD_SEP = '>'; // DOC_COORDINATE
     private static final char COORD_SEP = ' ';
-    private static final char DF_SEP = '*';
-    private static final char TF_SEP = '#';
+    private static final char TF_SEP = '#'; // TERM_FREQUENCY
 //    private static final String TERM_PATHS = "data/cache/term.bin";
 //    private static final String DOC_ID_PATH = "data/cache/docId.bin";
 
@@ -81,7 +80,7 @@ public class IndexServer {
     /**
      * @param term normalized token
      * @return set of postings with list of positions associated with each document
-     * @throws IOException
+     * @throws IOException rethrows exception caused by reading from index files
      */ // Map<docID, positions> size of map == df, size of positions == tf
     public Map<Integer, ArrayList<Integer>> getTermDocCoord(String term) throws IOException {
         if (!containsElement(term, IndexType.COORDINATE))
@@ -98,7 +97,7 @@ public class IndexServer {
      * @param term element to search for
      * @param type type of index to search in
      * @return postings list or empty list if no postings found
-     */                // long operation!!!
+     */
     public ArrayList<Integer> getPostings(String term, IndexType type) { // length of the result == tf
         if (!containsElement(term, type)) throw new NoSuchElementException("No such element found!");
         String path;
@@ -276,8 +275,6 @@ public class IndexServer {
         try (BufferedWriter bw = new BufferedWriter(new FileWriter(new File(pathNameDict)))) {
             for (Map.Entry<String, HashMap<Integer, ArrayList<Integer>>> entry : dictionary.entrySet()) {
                 bw.write(entry.getKey());
-                bw.write(DF_SEP);
-                bw.write(valueOf(entry.getValue().size()));
                 // <term, Map<docID, positions>> size of map == df, size of positions == tf
 
                 for (Integer docID : new TreeSet<>(entry.getValue().keySet())) {
@@ -309,11 +306,13 @@ public class IndexServer {
         saveParticles();
         dictionary = null;
 
-        RandomizedQueue<Tuple<String, Integer>> tstElems = new RandomizedQueue<>();
+        List<Tuple> tuples = new ArrayList<>();
+        int prevTupleIndex = 0;
         int numFlecks = 0;
-        int numTermsPerFleck = 1000;//(int) Math.sqrt(vocabulary.size());
+        int numTermsPerFleck = 1000;
         String path = String.format(TERM_INDEX_FLECKS, numFlecks);
-        BufferedWriter fleck = new BufferedWriter(new FileWriter(new File(path)));
+        BufferedOutputStream fleck = new BufferedOutputStream(new FileOutputStream(new File(path)));
+        long writtenBytes = 0; //for fleck
 
         System.out.println("Start transfer Merge");
 
@@ -322,27 +321,40 @@ public class IndexServer {
             if (i > numTermsPerFleck) {
                 path = String.format(TERM_INDEX_FLECKS, ++numFlecks);
                 fleck.close();
-                fleck = new BufferedWriter(new FileWriter(new File(path)));
+
+                String editPath = String.format(TERM_INDEX_FLECKS, tuples.get(prevTupleIndex).getFleckID());
+                RandomAccessFile raf = new RandomAccessFile(editPath, "rw");
+                while (prevTupleIndex < tuples.size()) {
+                    Tuple nextTuple = tuples.get(prevTupleIndex);
+                    raf.seek(nextTuple.getFleckPos() + prevTupleIndex++ * Integer.BYTES);
+                    raf.writeInt(nextTuple.getDocFr());
+                }
+                raf.close();
+
+                fleck = new BufferedOutputStream(new FileOutputStream(new File(path)));
+                writtenBytes = 0;
                 i = 0;
             }
 
             for (PTP p : termsPQ)
-                assert p.getCurrState() == PTP.State.DOC_FR; // error -> doc_id
+                assert p.getCurrState() == PTP.State.DOC_ID;
 
             PTP termHead = termsPQ.poll();
-            // TODO: implement compression and get rid of Strings, change method signature
-            assert termHead != null;
-            int totalDocFr = Integer.parseInt(termHead.getNext());
-            tstElems.enqueue(new Tuple<>(termHead.getCurrTerm(), numFlecks));
-            PriorityQueue<PTP> docIdPQ = new PriorityQueue<>(PTP.getComparator(PTP.State.DOC_ID));
-            termHead.getNext();
-            docIdPQ.add(termHead);
 
+            assert termHead != null;
+
+            Tuple currentTermTuple = new Tuple(termHead.getCurrTerm(), numFlecks, writtenBytes);
+
+            PriorityQueue<PTP> docIdPQ = new PriorityQueue<>(PTP.getComparator(PTP.State.DOC_ID));
+            docIdPQ.add(termHead.getNext());
+
+            Set<Integer> docsFr = new HashSet<>();
             while (!termsPQ.isEmpty() && termHead.equalsTerm(termsPQ.peek())) {// come through all terms
                 PTP sameTerm = termsPQ.poll();
+
                 assert sameTerm != null;
-                totalDocFr += Integer.parseInt(sameTerm.getNext()); // state == post Doc_Fr
-                sameTerm.getNext(); // state == post docID
+
+                docsFr.add(sameTerm.getNext().getCurrDocID()); // state == post docID
                 docIdPQ.add(sameTerm); // there will be lots of elements but only few duplicates
                 // (customer's file was split into 2+ particles)
             }
@@ -351,62 +363,71 @@ public class IndexServer {
                 assert p.getCurrState() == PTP.State.TERM_FR;
 
             // they will all have the same term
-            fleck.write(termHead.getCurrTerm());
-            fleck.write(DF_SEP);  // WRONG FR FILE SPLIT IN THE MIDDLE
-            fleck.write(valueOf(totalDocFr));
-
             while (!docIdPQ.isEmpty()) {
                 PriorityQueue<PTP> posPQ = new PriorityQueue<>(PTP.getComparator(PTP.State.POSITION));
                 PTP docIdHead = docIdPQ.poll();
+
                 assert docIdHead != null;
-                int totalTermFr = Integer.parseInt(docIdHead.getNext());
-                posPQ.add(docIdHead);
+
+                int totalTermFr = docIdHead.getNext().getCurrTermFr(); // state == POSITION
+                posPQ.add(docIdHead.getNext()); // state == post POSITION (possible term or docId or EOF)
                 while (!docIdPQ.isEmpty() && docIdHead.equalsDocId(docIdPQ.peek())) {// come through all docs of current term
                     PTP sameDocId = docIdPQ.poll();
-                    assert sameDocId != null;
-                    totalTermFr += Integer.parseInt(sameDocId.getNext());
-                    sameDocId.getNext(); // state == post pos (possible term or docId or EOF)
-                    posPQ.add(sameDocId);
-                }
-                fleck.write(NEXT_DOC_SEP);
-                fleck.write(valueOf(docIdHead.getCurrDocID()));
-                fleck.write(TF_SEP);
-                fleck.write(valueOf(totalTermFr));
-                fleck.write(DOC_COORD_SEP);
 
-                while (true) { // come through all coords of current doc
+                    assert sameDocId != null;
+
+                    totalTermFr += sameDocId.getNext().getCurrTermFr();
+                    posPQ.add(sameDocId.getNext());
+                }
+
+                writtenBytes += intToFleck(fleck, docIdHead.getCurrDocID());
+                writtenBytes += intToFleck(fleck, totalTermFr);
+
+                while (!posPQ.isEmpty()) { // come through all coords of current doc
                     PTP nextPos = posPQ.poll();
+
                     assert nextPos != null; // nextPos cannot be null because at least docIdHead is in posPQ
-                    fleck.write(valueOf(nextPos.getCurrPos()));
+
+                    writtenBytes += intToFleck(fleck, nextPos.getCurrPos());
 
                     while (nextPos.getCurrState() == PTP.State.POSITION) {
-                        fleck.write(COORD_SEP);
-                        fleck.write(valueOf(nextPos.getNext()));
+                        writtenBytes += intToFleck(fleck, nextPos.getNext().getCurrPos());
                     }
 
                     switch (nextPos.getCurrState()) {
                         case TERM:
-                            nextPos.getNext(); // switch to the post-TERM state (update term)
-                            termsPQ.add(nextPos);
-                            assert nextPos.getCurrState() == PTP.State.DOC_FR;
+                            // switch to the post-TERM state (update term)
+                            termsPQ.add(nextPos.getNext());
                             break;
                         case DOC_ID:
-                            nextPos.getNext(); // switch to the post-DOC_ID state (update docId)
-                            docIdPQ.add(nextPos);
+                            // switch to the post-DOC_ID state (update docId)
+                            docIdPQ.add(nextPos.getNext());
                             break;
                         case EOF:
                             break;
                     }
-                    if (posPQ.isEmpty()) break;
-                    fleck.write(COORD_SEP);
                 }
             }
-            fleck.newLine();
+            currentTermTuple.setDocFr(docsFr.size());
+            tuples.add(currentTermTuple);
         }
-        while (!tstElems.isEmpty()) {
-            Tuple<String, Integer> t = tstElems.dequeue();
-            termPostingPath.put(t.getV1(), t.getV2());
+        Tuple[] sortedTuples = tuples.toArray(new Tuple[0]);
+        Quick3string.sort(sortedTuples);
+    }
+
+    private long intToFleck(BufferedOutputStream fleck, int number) throws IOException {
+        byte[] vlc = new byte[5]; // 2^4*7 < 2^31 < 2^5*7
+
+        byte written = 5;
+        while (true) {
+            vlc[--written] = (byte) (number % 128);
+            if (number <= 128) break;
+            number /= 128;
         }
+        vlc[vlc.length - 1] += 128;
+
+        fleck.write(vlc, written, vlc.length - written);
+        return written;
     }
 
     private PriorityQueue<PTP> initPTP() throws IOException {
@@ -423,7 +444,7 @@ public class IndexServer {
 
         // ParticleTokenProvider
         enum State { // state to which the next char refers ":" and ">" change the state
-            TERM, DOC_FR, DOC_ID, TERM_FR, POSITION, EOF
+            TERM, DOC_ID, TERM_FR, POSITION, EOF
         }
 
         private static final boolean isWindows = System.lineSeparator().length() != 1;
@@ -434,7 +455,6 @@ public class IndexServer {
         private String nextTerm;
         private int cDocID;
         private int cPos;
-        private int cDocFr;
         private int cTermFr;
 
         private String path; // debug
@@ -445,7 +465,7 @@ public class IndexServer {
             path = particle.getPath();
         }
 
-        String getNext() {
+        PTP getNext() {
             try {
                 return fill();
             } catch (IOException e) {
@@ -453,18 +473,17 @@ public class IndexServer {
             }
         }
 
-
-        private String fill() throws IOException {
+        private PTP fill() throws IOException {
             if (nextTerm != null && currentState == State.TERM) {
                 cTerm = nextTerm;
                 nextTerm = null;
-                currentState = State.DOC_FR;
-                return cTerm;
+                currentState = State.DOC_ID;
+                return this;
             }
 
             char nextChar = (char) br.read();
             if (nextChar == (char) -1) return null;
-            while (nextChar != NEXT_DOC_SEP && nextChar != DF_SEP && nextChar != DOC_COORD_SEP
+            while (nextChar != NEXT_DOC_SEP && nextChar != DOC_COORD_SEP
                     && nextChar != TF_SEP && nextChar != COORD_SEP
                     && nextChar != System.lineSeparator().charAt(0) && nextChar != (char) -1) {
                 builder.append(nextChar);
@@ -474,18 +493,14 @@ public class IndexServer {
             String update = builder.toString();
             if (currentState == State.EOF) {
                 builder.setLength(0);
-                return nextTerm = update;
+                nextTerm = update;
+                return this;
             }
 
             switch (currentState) {
                 case TERM:
-                    assert (nextChar == DF_SEP);
-                    cTerm = update;
-                    currentState = State.DOC_FR;
-                    break;
-                case DOC_FR:
                     assert (nextChar == NEXT_DOC_SEP);
-                    cDocFr = Integer.parseInt(update);
+                    cTerm = update;
                     currentState = State.DOC_ID;
                     break;
                 case DOC_ID:
@@ -513,7 +528,7 @@ public class IndexServer {
                 if (fill() == null) br.close();
                 else currentState = State.TERM;
             }
-            return update;
+            return this;
         }
 
         static Comparator<PTP> getComparator(State mode) {
@@ -553,11 +568,7 @@ public class IndexServer {
             return cPos;
         }
 
-        public int getcDocFr() {
-            return cDocFr;
-        }
-
-        public int getcTermFr() {
+        int getCurrTermFr() {
             return cTermFr;
         }
     }
@@ -677,28 +688,130 @@ public class IndexServer {
 }
 
 
-class Tuple<T, E> {
-    private T v1;
-    private E v2;
+class Tuple {
+    private final String term;
+    private final int fleckID;
+    private final long fleckPos;
+    private int docFr;
 
-    public Tuple(T v1, E v2) {
-        this.v1 = v1;
-        this.v2 = v2;
+    public Tuple(String term, int fleck, long pos) {
+        this.term = term;
+        fleckID = fleck;
+        fleckPos = pos;
     }
 
-    public T getV1() {
-        return v1;
+    public int getDocFr() {
+        return docFr;
     }
 
-    public void setV1(T v1) {
-        this.v1 = v1;
+    public void setDocFr(int docFr) {
+        this.docFr = docFr;
     }
 
-    public E getV2() {
-        return v2;
+    public String getTerm() {
+        return term;
     }
 
-    public void setV2(E v2) {
-        this.v2 = v2;
+
+    public int getFleckID() {
+        return fleckID;
+    }
+
+
+    public long getFleckPos() {
+        return fleckPos;
+    }
+}
+
+class Quick3string {
+    private static final int CUTOFF = 15;   // cutoff to insertion sort
+
+    // do not instantiate
+    private Quick3string() {
+    }
+
+    /**
+     * Rearranges the array of strings in ascending order.
+     *
+     * @param a the array to be sorted
+     */
+    public static void sort(Tuple[] a) {
+        shuffle(a);
+        sort(a, 0, a.length - 1, 0);
+        assert isSorted(a);
+    }
+
+    // return the dth character of s, -1 if d = length of s
+    private static int charAt(Tuple s, int d) {
+        assert d >= 0 && d <= s.getTerm().length();
+        if (d == s.getTerm().length()) return -1;
+        return s.getTerm().charAt(d);
+    }
+
+    // 3-way string quicksort a[lo..hi] starting at dth character
+    private static void sort(Tuple[] a, int lo, int hi, int d) {
+
+        // cutoff to insertion sort for small subarrays
+        if (hi <= lo + CUTOFF) {
+            insertion(a, lo, hi, d);
+            return;
+        }
+
+        int lt = lo, gt = hi;
+        int v = charAt(a[lo], d);
+        int i = lo + 1;
+        while (i <= gt) {
+            int t = charAt(a[i], d);
+            if (t < v) exch(a, lt++, i++);
+            else if (t > v) exch(a, i, gt--);
+            else i++;
+        }
+
+        // a[lo..lt-1] < v = a[lt..gt] < a[gt+1..hi].
+        sort(a, lo, lt - 1, d);
+        if (v >= 0) sort(a, lt, gt, d + 1);
+        sort(a, gt + 1, hi, d);
+    }
+
+    // sort from a[lo] to a[hi], starting at the dth character
+    private static void insertion(Tuple[] a, int lo, int hi, int d) {
+        for (int i = lo; i <= hi; i++)
+            for (int j = i; j > lo && less(a[j], a[j - 1], d); j--)
+                exch(a, j, j - 1);
+    }
+
+    // exchange a[i] and a[j]
+    private static void exch(Tuple[] a, int i, int j) {
+        Tuple temp = a[i];
+        a[i] = a[j];
+        a[j] = temp;
+    }
+
+    // is v less than w, starting at character d
+    private static boolean less(Tuple v, Tuple w, int d) {
+        assert v.getTerm().substring(0, d).equals(w.getTerm().substring(0, d));
+        for (int i = d; i < Math.min(v.getTerm().length(), w.getTerm().length()); i++) {
+            if (v.getTerm().charAt(i) < w.getTerm().charAt(i)) return true;
+            if (v.getTerm().charAt(i) > w.getTerm().charAt(i)) return false;
+        }
+        return v.getTerm().length() < w.getTerm().length();
+    }
+
+    // is the array sorted
+    private static boolean isSorted(Tuple[] a) {
+        for (int i = 1; i < a.length; i++)
+            if (a[i].getTerm().compareTo(a[i - 1].getTerm()) < 0) return false;
+        return true;
+    }
+
+    public static void shuffle(Object[] a) {
+        int n = a.length;
+        for (int i = 0; i < n; i++) {
+            // choose index uniformly in [0, i]
+            int r = (int) (Math.random() * (i + 1));
+            Object swap = a[r];
+            a[r] = a[i];
+            a[i] = swap;
+        }
     }
 }
