@@ -7,7 +7,7 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.ChoiceBox;
 import javafx.scene.control.TextField;
 import ukma.ir.App;
-import ukma.ir.IndexServer;
+import ukma.ir.index.IndexServer;
 import ukma.ir.QueryProcessor;
 
 public class MainController {

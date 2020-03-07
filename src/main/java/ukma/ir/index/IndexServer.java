@@ -1,9 +1,11 @@
-package ukma.ir;
+package ukma.ir.index;
 
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import edu.stanford.nlp.process.Morphology;
-import ukma.ir.data_stuctores.TST;
+import sun.reflect.generics.reflectiveObjects.NotImplementedException;
+import ukma.ir.index.helpers.IndexBody;
+import ukma.ir.index.helpers.TermData;
 
 import javax.annotation.Nullable;
 import java.io.*;
@@ -30,14 +32,9 @@ public class IndexServer {
 //    private static final String TERM_PATHS = "data/cache/term.bin";
 //    private static final String DOC_ID_PATH = "data/cache/docId.bin";
 
-    private int[][] dict; // 0th - start index of term, 1st - fleckID, 2nd - in-fleck of pos (1/2), 3rd - (2/2) 4rd - docFr
-    private int[][] revDict;
-    private String vocabStr;
-    private String reVocabStr;
     private final BiMap<String, Integer> docId; // path - docId
     // term - id of the corresponding index file
-    private final TST<Integer> termPostingPath;
-    private TST<String> reversedTermPostingPath;
+    private IndexBody index;
     private static IndexServer instance; //effectively final
     private static final Morphology MORPH = new Morphology();
 
@@ -45,12 +42,11 @@ public class IndexServer {
     private int numStoredDictionaries;
     private final CountDownLatch completion = new CountDownLatch(WORKERS);
     // hash function is effective for Integer
-    // <term, Map<docID, positions>> size of map == df, size of positions == tf
+    // <term, Hash<docID, positions>> size of map == df, size of positions == tf
     private TreeMap<String, HashMap<Integer, ArrayList<Integer>>> dictionary;
     private static final Object locker = new Object();
 
     private IndexServer() {
-        termPostingPath = new TST<>();
         docId = HashBiMap.create();
     }
 
@@ -64,87 +60,101 @@ public class IndexServer {
         }
     }
 
-    // phrase index is removed, so at this stage there is no need for the enum but it will change
+    // for GUI
     public enum IndexType {
         TERM, COORDINATE, JOKER
     }
 
-    public boolean containsElement(String term, IndexType type) {
-        switch (type) {
-            case TERM:
-                return termPostingPath.contains(term);
-            case COORDINATE:
-                return termPostingPath.contains(term);
-            default:
-                throw new IllegalArgumentException("incorrect type");
-        }
-    }
+    // #region Deprecated
 
     /**
-     * @param term normalized token
-     * @return set of postings with list of positions associated with each document
-     * @throws IOException rethrows exception caused by reading from index files
-     */ // Map<docID, positions> size of map == df, size of positions == tf
-    public Map<Integer, ArrayList<Integer>> getTermDocCoord(String term) throws IOException {
-        if (!containsElement(term, IndexType.COORDINATE))
-            throw new NoSuchElementException("no term \"" + term + "\" found");
-        try (Stream<String> lines = Files.lines(Paths.get(String.format(TERM_INDEX_FLECKS, termPostingPath.get(term))))) {
-            String target = lines
-                    .filter(line -> line.startsWith(term))
-                    .toArray(String[]::new)[0];
-            return parseCoords(target);
-        }
-    }
-
-    /**
-     * @param term element to search for
-     * @param type type of index to search in
-     * @return postings list or empty list if no postings found
+     * FIXME: 07-Mar-20 implement and use IndexBody's methods
      */
-    public ArrayList<Integer> getPostings(String term, IndexType type) { // length of the result == tf
-        if (!containsElement(term, type)) throw new NoSuchElementException("No such element found!");
-        String path;
-        switch (type) {
-            case TERM:
-                path = String.format(TERM_INDEX_FLECKS, termPostingPath.get(term));
-                break;
-            default:
-                throw new IllegalArgumentException("incorrect type");
-        }
-
-        try (BufferedReader br = new BufferedReader(new FileReader(new File(path)))) {
-            String search = br.readLine();
-            while (search != null) {
-                if (search.startsWith(term)) {
-                    String postings = search.substring(search.indexOf(NEXT_DOC_SEP) + 1); // length of a char
-                    ArrayList<Integer> pList = new ArrayList<>();
-                    for (String docID : postings.split(valueOf(NEXT_DOC_SEP)))
-                        pList.add(Integer.parseInt(docID.substring(0, docID.indexOf(DOC_COORD_SEP))));
-                    return pList;
-                }
-                search = br.readLine();
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-            throw new NoSuchElementException("cannot find file specified");
-        }
-        throw new NoSuchElementException("index file is found but it does not contain the element specified");
+    public boolean containsElement(String term) {
+        throw new NotImplementedException();
+//        switch (type) {
+//            case TERM:
+//                return termPostingPath.contains(term);
+//            case COORDINATE:
+//                return termPostingPath.contains(term);
+//            default:
+//                throw new IllegalArgumentException("incorrect type");
+//        }
     }
 
+    /**
+     * FIXME: 07-Mar-20 RandomAccessFile instead of reading the whole file
+     */
+    public Map<Integer, ArrayList<Integer>> getTermDocCoord(String term) throws IOException {
+        throw new NotImplementedException();
+//        if (!containsElement(term, IndexType.COORDINATE))
+//            throw new NoSuchElementException("no term \"" + term + "\" found");
+//        try (Stream<String> lines = Files.lines(Paths.get(String.format(TERM_INDEX_FLECKS, termPostingPath.get(term))))) {
+//            String target = lines
+//                    .filter(line -> line.startsWith(term))
+//                    .toArray(String[]::new)[0];
+//            return parseCoords(target);
+//        }
+    }
+
+    /**
+     * FIXME: 07-Mar-20 RandomAccessFile instead of reading the whole file
+     */
+    public ArrayList<Integer> getPostings(String term) {
+        throw new NotImplementedException();
+//        if (!containsElement(term, type)) throw new NoSuchElementException("No such element found!");
+//        String path;
+//        switch (type) {
+//            case TERM:
+//                path = String.format(TERM_INDEX_FLECKS, termPostingPath.get(term));
+//                break;
+//            default:
+//                throw new IllegalArgumentException("incorrect type");
+//        }
+//
+//        try (BufferedReader br = new BufferedReader(new FileReader(new File(path)))) {
+//            String search = br.readLine();
+//            while (search != null) {
+//                if (search.startsWith(term)) {
+//                    String postings = search.substring(search.indexOf(NEXT_DOC_SEP) + 1); // length of a char
+//                    ArrayList<Integer> pList = new ArrayList<>();
+//                    for (String docID : postings.split(valueOf(NEXT_DOC_SEP)))
+//                        pList.add(Integer.parseInt(docID.substring(0, docID.indexOf(DOC_COORD_SEP))));
+//                    return pList;
+//                }
+//                search = br.readLine();
+//            }
+//        } catch (IOException e) {
+//            e.printStackTrace();
+//            throw new NoSuchElementException("cannot find file specified");
+//        }
+//        throw new NoSuchElementException("index file is found but it does not contain the element specified");
+    }
+
+    /**
+     * FIXME: 07-Mar-20 adapt for dictionary as a string
+     */
     public Iterable<String> startWith(String prefix) {
-        return termPostingPath.keysWithPrefix(prefix);
+        throw new NotImplementedException();
+        // return termPostingPath.keysWithPrefix(prefix);
     }
 
+    /**
+     * FIXME: 07-Mar-20 adapt for dictionary as a string
+     */
     public Iterable<String> endWith(String suffix) {
-        StringBuilder reverser = new StringBuilder(suffix.length());
-        reverser.append(suffix).reverse();
-        // TST returns sorted keys and so makes it inefficient to add them int another TST
-        Collection<String> reversed = reversedTermPostingPath.keysWithPrefix(reverser.toString());
-        List<String> straight = new ArrayList<>(reversed.size());
-        for (String rev : reversed)
-            straight.add(reversedTermPostingPath.get(rev));
-        return straight;
+        throw new NotImplementedException();
+//        StringBuilder reverser = new StringBuilder(suffix.length());
+//        reverser.append(suffix).reverse();
+//        // TST returns sorted keys and so makes it inefficient to add them into another TST
+//        Collection<String> reversed = reversedTermPostingPath.keysWithPrefix(reverser.toString());
+//        List<String> straight = new ArrayList<>(reversed.size());
+//        for (String rev : reversed)
+//            straight.add(reversedTermPostingPath.get(rev));
+//        return straight;
     }
+
+    // #endregion
 
     public String getDocName(int docID) {
         return Paths.get(docId.inverse().get(docID)).getFileName().toString();
@@ -186,8 +196,6 @@ public class IndexServer {
             completion.await();
             System.out.println("start transferMerge: " + getTime());
             transferMerge();
-            //System.out.println("start building REVERSED");
-            //buildReversed();
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -251,9 +259,7 @@ public class IndexServer {
         }
 
         Runtime rt = Runtime.getRuntime();
-        if (rt.maxMemory() - rt.freeMemory() > MAX_MEMORY_LOAD) {
-            saveParticles();
-        }
+        if (rt.maxMemory() - rt.freeMemory() > MAX_MEMORY_LOAD) saveParticles();
     }
 //    /**
 //     * IMPORTANT IDEA, DO NOT DELETE!!!
@@ -309,7 +315,7 @@ public class IndexServer {
         saveParticles();
         dictionary = null;
 
-        List<Tuple> tuples = new ArrayList<>();
+        List<TermData> termData = new ArrayList<>();
         int prevTupleIndex = 0;
         int numFlecks = 0;
         int numTermsPerFleck = 1000;
@@ -325,12 +331,12 @@ public class IndexServer {
                 path = String.format(TERM_INDEX_FLECKS, ++numFlecks);
                 fleck.close();
 
-                String editPath = String.format(TERM_INDEX_FLECKS, tuples.get(prevTupleIndex).getFleckID());
+                String editPath = String.format(TERM_INDEX_FLECKS, termData.get(prevTupleIndex).getFleckID());
                 RandomAccessFile raf = new RandomAccessFile(editPath, "rw");
-                while (prevTupleIndex < tuples.size()) {
-                    Tuple nextTuple = tuples.get(prevTupleIndex);
-                    raf.seek(nextTuple.getFleckPos() + prevTupleIndex++ * Integer.BYTES);
-                    raf.writeInt(nextTuple.getDocFr());
+                while (prevTupleIndex < termData.size()) {
+                    TermData nextTermData = termData.get(prevTupleIndex);
+                    raf.seek(nextTermData.getFleckPos() + prevTupleIndex++ * Integer.BYTES);
+                    raf.writeInt(nextTermData.getDocFr());
                 }
                 raf.close();
 
@@ -346,7 +352,7 @@ public class IndexServer {
 
             assert termHead != null;
 
-            Tuple currentTermTuple = new Tuple(termHead.getCurrTerm(), numFlecks, writtenBytes);
+            TermData currentTermTermData = new TermData(termHead.getCurrTerm(), numFlecks, writtenBytes);
 
             PriorityQueue<PTP> docIdPQ = new PriorityQueue<>(PTP.getComparator(PTP.State.DOC_ID));
             docIdPQ.add(termHead.getNext());
@@ -414,90 +420,11 @@ public class IndexServer {
                     }
                 }
             }
-            currentTermTuple.setDocFr(docsFr.size());
-            tuples.add(currentTermTuple);
+            currentTermTermData.setDocFr(docsFr.size());
+            termData.add(currentTermTermData);
         }
-        Tuple[] sortedTuples = tuples.toArray(new Tuple[0]);
-        Quick3string.sort(sortedTuples);
-        buildDictionary(sortedTuples);
-    }
-
-    private void buildDictionary(Tuple[] sortedTuples) {
-        StringBuilder vocabStr = new StringBuilder();
-        dict = new int[sortedTuples.length][5];
-        for (int i = 0; i < sortedTuples.length; i++) {
-            int[] termData = dict[i];
-            Tuple currTuple = sortedTuples[i];
-            termData[0] = vocabStr.length();
-            termData[1] = currTuple.getFleckID();
-            termData[2] = (int)(currTuple.getFleckPos() >> 32); //first 4 bytes
-            termData[3] = (int)currTuple.getFleckPos(); // last 4 bytes
-            termData[4] = currTuple.getDocFr();
-            vocabStr.append(currTuple.getTerm());
-        }
-        this.vocabStr = vocabStr.toString();
-
-        vocabStr.setLength(0);
-        CharSequence[] revTerms = new CharSequence[sortedTuples.length];
-        char oldIndexSep = '%';
-        for (int i = 0; i < sortedTuples.length; i++) {
-            StringBuilder reverser = new StringBuilder(sortedTuples[i].getTerm().length() + 1 + intDigits(i));
-            reverser.append(sortedTuples[i].getTerm()).reverse().append(oldIndexSep).append(i);
-            sortedTuples[i] = null;
-            revTerms[i] = reverser;
-        }
-
-        Quick3string.sort(revTerms);
-        StringBuilder reVocabStr = new StringBuilder();
-        revDict = new int[revTerms.length][2];
-        for (int i = 0; i < revTerms.length; i++) {
-            revDict[i][0] = reVocabStr.length();
-            int sepIndex = -1;
-            while (revTerms[i].charAt(++sepIndex) != oldIndexSep);
-            revDict[i][1] = Integer.parseInt(revTerms[i].subSequence(sepIndex++, revTerms[i].length()).toString()); // java 9 ???
-            reVocabStr.append(revTerms[i].subSequence(0, sepIndex));
-        }
-        this.reVocabStr = reVocabStr.toString();
-    }
-
-    private int intDigits(int number) {
-        if (number < 100000) {
-            if (number < 100) {
-                if (number < 10) {
-                    return 1;
-                } else {
-                    return 2;
-                }
-            } else {
-                if (number < 1000) {
-                    return 3;
-                } else {
-                    if (number < 10000) {
-                        return 4;
-                    } else {
-                        return 5;
-                    }
-                }
-            }
-        } else {
-            if (number < 10000000) {
-                if (number < 1000000) {
-                    return 6;
-                } else {
-                    return 7;
-                }
-            } else {
-                if (number < 100000000) {
-                    return 8;
-                } else {
-                    if (number < 1000000000) {
-                        return 9;
-                    } else {
-                        return 10;
-                    }
-                }
-            }
-        }
+        TermData[] sortedTermData = termData.toArray(new TermData[0]);
+        index = new IndexBody(sortedTermData);
     }
 
     private long intToFleck(BufferedOutputStream fleck, int number) throws IOException {
@@ -525,9 +452,9 @@ public class IndexServer {
         return ptpPQ;
     }
 
+    // ParticleTokenProvider
     static class PTP {
 
-        // ParticleTokenProvider
         enum State { // state to which the next char refers ":" and ">" change the state
             TERM, DOC_ID, TERM_FR, POSITION, EOF
         }
@@ -542,12 +469,9 @@ public class IndexServer {
         private int cPos;
         private int cTermFr;
 
-        private String path; // debug
-
         PTP(File particle) throws IOException {
             br = new BufferedReader(new FileReader(particle));
             currentState = State.TERM;
-            path = particle.getPath();
         }
 
         PTP getNext() {
@@ -665,17 +589,18 @@ public class IndexServer {
      * @return HashMap of posting-coords sets
      */
     private Map<Integer, ArrayList<Integer>> parseCoords(String line) {
-        String[] spl_1 = line.split(valueOf(NEXT_DOC_SEP)); // 0th is the term then docID-positions sets
-        Map<Integer, ArrayList<Integer>> result = new HashMap<>();
-        for (int i = 1; i < spl_1.length; i++) {
-            int coordStart = spl_1[i].indexOf(DOC_COORD_SEP);
-            String[] coordTokens = spl_1[i].substring(coordStart + 1).split("\\s"); // 1 = length of DOC_COORD_SEP
-            ArrayList<Integer> coordList = new ArrayList<>(coordTokens.length);
-            for (String coord : coordTokens)
-                coordList.add(Integer.parseInt(coord));
-            result.put(Integer.parseInt(spl_1[i].substring(0, coordStart)), coordList);
-        }
-        return result;
+        throw new NotImplementedException();
+//        String[] spl_1 = line.split(valueOf(NEXT_DOC_SEP)); // 0th is the term then docID-positions sets
+//        Map<Integer, ArrayList<Integer>> result = new HashMap<>();
+//        for (int i = 1; i < spl_1.length; i++) {
+//            int coordStart = spl_1[i].indexOf(DOC_COORD_SEP);
+//            String[] coordTokens = spl_1[i].substring(coordStart + 1).split("\\s"); // 1 = length of DOC_COORD_SEP
+//            ArrayList<Integer> coordList = new ArrayList<>(coordTokens.length);
+//            for (String coord : coordTokens)
+//                coordList.add(Integer.parseInt(coord));
+//            result.put(Integer.parseInt(spl_1[i].substring(0, coordStart)), coordList);
+//        }
+//        return result;
     }
 
     private class TermProvider {
@@ -748,170 +673,14 @@ public class IndexServer {
         }
     }
 
-    private void buildReversed() {
-        reversedTermPostingPath = new TST<>();
-        StringBuilder reverser = new StringBuilder();
-        for (String key : termPostingPath.keys()) {
-            reverser.append(key);
-            reverser.reverse();
-            reversedTermPostingPath.put(reverser.toString(), key);
-            reverser.setLength(0);
-        }
-    }
-
-
-    private long startTime = System.currentTimeMillis();
-
     private String showMemory() {
         Runtime rt = Runtime.getRuntime();
         return String.format("FREE memory: %.2f%%", (double) rt.freeMemory() / rt.maxMemory() * 100);
     }
 
+    private long startTime = System.currentTimeMillis();
+
     private long getTime() {
         return (System.currentTimeMillis() - startTime) / 1000;
-    }
-}
-
-
-class Tuple implements CharSequence{
-    private final String term;
-    private final int fleckID;
-    private final long fleckPos;
-    private int docFr;
-
-    public Tuple(String term, int fleck, long pos) {
-        this.term = term;
-        fleckID = fleck;
-        fleckPos = pos;
-    }
-
-    public int getDocFr() {
-        return docFr;
-    }
-
-    public void setDocFr(int docFr) {
-        this.docFr = docFr;
-    }
-
-    public String getTerm() {
-        return term;
-    }
-
-
-    public int getFleckID() {
-        return fleckID;
-    }
-
-
-    public long getFleckPos() {
-        return fleckPos;
-    }
-
-    @Override
-    public int length() {
-        return term.length();
-    }
-
-    @Override
-    public char charAt(int index) {
-        return term.charAt(index);
-    }
-
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        return term.subSequence(start, end);
-    }
-}
-
-class Quick3string {
-    private static final int CUTOFF = 15;   // cutoff to insertion sort
-
-    // do not instantiate
-    private Quick3string() {
-    }
-
-    /**
-     * Rearranges the array of strings in ascending order.
-     *
-     * @param a the array to be sorted
-     */
-    public static void sort(CharSequence[] a) {
-        shuffle(a);
-        sort(a, 0, a.length - 1, 0);
-        assert isSorted(a);
-    }
-
-    // return the dth character of s, -1 if d = length of s
-    private static int charAt(CharSequence s, int d) {
-        assert d >= 0 && d <= s.length();
-        if (d == s.length()) return -1;
-        return s.charAt(d);
-    }
-
-    // 3-way string quicksort a[lo..hi] starting at dth character
-    private static void sort(CharSequence[] a, int lo, int hi, int d) {
-
-        // cutoff to insertion sort for small subarrays
-        if (hi <= lo + CUTOFF) {
-            insertion(a, lo, hi, d);
-            return;
-        }
-
-        int lt = lo, gt = hi;
-        int v = charAt(a[lo], d);
-        int i = lo + 1;
-        while (i <= gt) {
-            int t = charAt(a[i], d);
-            if (t < v) exch(a, lt++, i++);
-            else if (t > v) exch(a, i, gt--);
-            else i++;
-        }
-
-        // a[lo..lt-1] < v = a[lt..gt] < a[gt+1..hi].
-        sort(a, lo, lt - 1, d);
-        if (v >= 0) sort(a, lt, gt, d + 1);
-        sort(a, gt + 1, hi, d);
-    }
-
-    // sort from a[lo] to a[hi], starting at the dth character
-    private static void insertion(CharSequence[] a, int lo, int hi, int d) {
-        for (int i = lo; i <= hi; i++)
-            for (int j = i; j > lo && less(a[j], a[j - 1], d); j--)
-                exch(a, j, j - 1);
-    }
-
-    // exchange a[i] and a[j]
-    private static void exch(CharSequence[] a, int i, int j) {
-        CharSequence temp = a[i];
-        a[i] = a[j];
-        a[j] = temp;
-    }
-
-    // is v less than w, starting at character d
-    private static boolean less(CharSequence v, CharSequence w, int d) {
-        assert v.toString().substring(0, d).equals(w.toString().substring(0, d));
-        for (int i = d; i < Math.min(v.length(), w.length()); i++) {
-            if (v.charAt(i) < w.charAt(i)) return true;
-            if (v.charAt(i) > w.charAt(i)) return false;
-        }
-        return v.length() < w.length();
-    }
-
-    // is the array sorted
-    private static boolean isSorted(CharSequence[] a) {
-        for (int i = 1; i < a.length; i++)
-            if (a[i].toString().compareTo(a[i - 1].toString()) < 0) return false;
-        return true;
-    }
-
-    public static void shuffle(Object[] a) {
-        int n = a.length;
-        for (int i = 0; i < n; i++) {
-            // choose index uniformly in [0, i]
-            int r = (int) (Math.random() * (i + 1));
-            Object swap = a[r];
-            a[r] = a[i];
-            a[i] = swap;
-        }
     }
 }

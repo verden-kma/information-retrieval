@@ -6,8 +6,7 @@ import javafx.scene.Scene;
 import javafx.stage.Stage;
 import ukma.ir.controllers.MainController;
 import ukma.ir.controllers.ResultController;
-
-import java.util.Comparator;
+import ukma.ir.index.IndexServer;
 
 public class App extends Application {
     private Scene mainScene, resultScene;

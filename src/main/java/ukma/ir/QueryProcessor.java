@@ -1,5 +1,7 @@
 package ukma.ir;
 
+import ukma.ir.index.IndexServer;
+
 import java.io.*;
 import java.nio.file.Path;
 import java.util.*;
@@ -31,10 +33,10 @@ public class QueryProcessor {
                     // then set posting for this term as a base for further intersections
                     // else do no intersection as the result is empty if any entry is empty
                     Set<Integer> inDocs;
-                    if (!includeTerms.isEmpty() && indexService.containsElement(includeTerms.get(0), IndexServer.IndexType.TERM)) {
-                        inDocs = new HashSet<>(indexService.getPostings(includeTerms.get(0), IndexServer.IndexType.TERM));
+                    if (!includeTerms.isEmpty() && indexService.containsElement(includeTerms.get(0))) {
+                        inDocs = new HashSet<>(indexService.getPostings(includeTerms.get(0)));
                         includeTerms.forEach(term -> {
-                            ArrayList<Integer> posting = indexService.getPostings(term, IndexServer.IndexType.TERM);
+                            ArrayList<Integer> posting = indexService.getPostings(term);
                             if (posting != null) inDocs.retainAll(posting); // intersect
                         });
                     }
@@ -42,7 +44,7 @@ public class QueryProcessor {
                     Set<Integer> exDocs = new HashSet<>();
                     for (String term : excludeTerms) {
                         if (term == null) continue; // normalizer might return null
-                        ArrayList<Integer> posting = indexService.getPostings(term, IndexServer.IndexType.TERM);
+                        ArrayList<Integer> posting = indexService.getPostings(term);
                         if (posting != null) exDocs.addAll(posting);
                     }
 
@@ -64,7 +66,7 @@ public class QueryProcessor {
 
         for (int i = 0, j = 0; i < tokens.length; j++, i += 2) {
             terms[j] = IndexServer.normalize(tokens[i]);
-            if (!indexService.containsElement(terms[j], IndexServer.IndexType.TERM)) return new ArrayList<>(0);
+            if (!indexService.containsElement(terms[j])) return new ArrayList<>(0);
         }
 
         for (int i = 1, j = 0; i < tokens.length; j++, i += 2)
@@ -187,7 +189,7 @@ public class QueryProcessor {
             } else valid = primeMatch;
 
             for (String v : valid)
-                termContribution.addAll(indexService.getPostings(v, IndexServer.IndexType.TERM));
+                termContribution.addAll(indexService.getPostings(v));
 
             if (validFiles.isEmpty()) validFiles.addAll(termContribution); // set base
             else validFiles.retainAll(termContribution); // intersect
