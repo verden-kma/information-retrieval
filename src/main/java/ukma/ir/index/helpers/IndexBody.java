@@ -2,27 +2,60 @@ package ukma.ir.index.helpers;
 
 import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.util.NoSuchElementException;
+
 public class IndexBody {
-    private int[][] dict; // 0th - start index of term, 1st - fleckID, 2nd - in-fleck of pos (1/2), 3rd - (2/2) 4rd - docFr
+    private int[][] dict; // 0th - start index of term, 1st - fleckID, 2nd - in-fleck start pos (1/2), 3rd - (2/2) 4rd - docFr
     private int[][] revDict;
     private String vocabStr;
     private String reVocabStr;
+    private final String FLECK_PATH;
 
-    public IndexBody(TermData[] sortedTermData) {
+    public IndexBody(TermData[] sortedTermData, String fleckPath) {
+        FLECK_PATH = fleckPath;
         Quick3string.sort(sortedTermData);
         buildDictionary(sortedTermData);
     }
 
     public boolean containsElement(String term) {
-        throw new NotImplementedException();
+        return findTerm(term, dict, vocabStr, false) != -1;
     }
 
-    public String[] startsWith(String prefix) {
-        throw new NotImplementedException();
+    public String[] startWith(String prefix) {
+        long sample = findTerm(prefix, dict, vocabStr, true);
+        if (sample == -1) throw new NoSuchElementException("No term with prefix \"" + prefix + "\" found.");
+
+        return edgeWith(prefix, sample, dict, vocabStr);
     }
 
-    public String[] endsWith(String suffix) {
-        throw new NotImplementedException();
+    public String[] endWith(String suffix) {
+        long sample = findTerm(suffix, revDict, reVocabStr, true);
+        if (sample == -1) throw new NoSuchElementException("No term with suffix \"" + suffix + "\" found.");
+
+        String[] reversed = edgeWith(suffix, sample, revDict, reVocabStr);
+        // possible optimization: avoid creation of 1 String -> reverse using char[] while populating "matched[i]"
+        StringBuilder directer = new StringBuilder(12);
+        for (int i = 0; i < reversed.length; i++) {
+            reversed[i] = directer.append(reversed[i]).reverse().toString();
+            directer.setLength(0);
+        }
+        return reversed;
+    }
+
+    private String[] edgeWith(String suffix, long sample, int[][] revDict, String reVocabStr) {
+        int topBound = findBound(suffix, sample, revDict, reVocabStr, true);
+        int bottomBound = findBound(suffix, sample, revDict, reVocabStr, false);
+        assert (topBound < bottomBound);
+        String[] matched = new String[bottomBound - topBound];
+        for (int i = 0; i < matched.length; i++) {
+            int begin = revDict[i][0];
+            int end = i + 1 < revDict.length ? revDict[i + 1][0] : reVocabStr.length();
+            matched[i] = reVocabStr.substring(begin, end);
+        }
+        return matched;
     }
 
     /**
@@ -30,19 +63,60 @@ public class IndexBody {
      *
      * @param term in index to search
      * @return array of docIDs which contain term
+     * @throws IOException if index data has been corrupted
      */
-    public int[] getPostings(String term) {
-        throw new NotImplementedException();
+    public int[] getPostings(String term) throws IOException {
+        int[][] fullInfo = getTermDocCoords(term);
+        int[] res = new int[fullInfo.length];
+        for (int i = 0; i < res.length; i++) {
+            res[i] = fullInfo[i][0];
+        }
+        return res;
     }
 
+    //TODO: 1) do not store docFr in memory
+    // 2) use buffer https://stackoverflow.com/questions/5614206/buffered-randomaccessfile-java
     /**
      * find documents and positions at which term resides
      *
      * @param term in index to search
-     * @return 2-dim array, 1st dim - docIDs, 2nd dim - coords
+     * @return 2-dim array, 1st dim - number of a docID, 2nd dim - docId, term frequency, coords
+     * @throws IOException if index data has been corrupted
      */
-    public int[][] getTermDocCoords(String term) {
-        throw new NotImplementedException();
+    public int[][] getTermDocCoords(String term) throws IOException{
+        long termData = findTerm(term, dict, vocabStr, false);
+        if (termData == -1) throw new NoSuchElementException("Term \"" + term + "\" is absent.");
+        int[] infoRow = dict[(int) (termData >> 32)];
+        String path = String.format(FLECK_PATH, infoRow[1]);
+        long inFleckPos = infoRow[2];
+        inFleckPos <<= 32;
+        inFleckPos |= infoRow[3];
+        try (RandomAccessFile raf = new RandomAccessFile(path, "r")) {
+            raf.seek(inFleckPos);
+            int docFr = raf.readInt();
+            int[][] termStat = new int[docFr][];
+            assert (docFr == infoRow[4]);
+            for (int i = 0; i < docFr; i++) {
+                int docID = readVLC(raf);
+                int termFr = readVLC(raf);
+                termStat[i] = new int[termFr+2];
+                termStat[i][0] = docID;
+                termStat[i][1] = termFr;
+                for (int j = 2; j < termFr + 2; j++) {
+                    termStat[i][j] = readVLC(raf);
+                }
+            }
+            return termStat;
+        }
+    }
+
+    private int readVLC(RandomAccessFile raf) throws IOException {
+        int res = 0;
+        while (true) {
+            byte next = raf.readByte();
+            if (next >= 0) res = res * 128 + next;
+            else return res * 128 + (next & 0b01111111);
+        }
     }
 
     private void buildDictionary(TermData[] sortedTermData) {
@@ -99,7 +173,7 @@ public class IndexBody {
             int mid = lo + (hi - lo) >> 1;
             lastCut = (lastCut - mid) & 0x7fffffff; // better than "return (a < 0) ? -a : a"
             int start = dict[mid][0];
-            int end = mid + 1 < dict.length ? dict[mid + 1][0] : vocabStr.length() - 1;
+            int end = mid + 1 < dict.length ? dict[mid + 1][0] : vocabStr.length();
             int cmp = cmpStrChars(term, vocabStr, start, end, prefix);
             if (cmp < 0) hi = mid - 1;
             else if (cmp > 0) lo = mid + 1;
@@ -121,14 +195,14 @@ public class IndexBody {
         do {
             mid = lo + (hi - lo) >> 1;
             int start = dict[mid][0];
-            int end = mid + 1 < dict.length ? dict[mid + 1][0] : vocabStr.length() - 1;
+            int end = mid + 1 < dict.length ? dict[mid + 1][0] : vocabStr.length();
 
             boolean inRange = cmpStrChars(term, vocabStr, start, end, true) == 0;
             if (inRange && findTop || !inRange && !findTop) hi = mid - 1;
             else lo = mid + 1;
         } while (lo <= hi);
         int start = dict[mid][0];
-        int end = mid + 1 < dict.length ? dict[mid + 1][0] : vocabStr.length() - 1;
+        int end = mid + 1 < dict.length ? dict[mid + 1][0] : vocabStr.length();
         if (cmpStrChars(term, vocabStr, start, end, true) != 0) return findTop ? mid + 1 : mid - 1;
         return mid;
     }
@@ -174,11 +248,21 @@ public class IndexBody {
 //
 //    }
 
-    private int cmpStrChars(final String term, final String vocabStr, final int start, final int end, final boolean prefix) {
+    /**
+     * compare passed term and a segment of sequence in range [start;end)
+     *
+     * @param term     to compare against a segment
+     * @param sequence to take segment
+     * @param start    position of the first char of segment in the sequence
+     * @param end      position of the last + 1 char
+     * @param prefix   if true then look for a match of the first term.length() chars else - full match
+     * @return 0 if term equals sequence, int > 0 if term > sequence, int < 0 otherwise
+     */
+    private int cmpStrChars(final CharSequence term, final CharSequence sequence, final int start, final int end, final boolean prefix) {
         final int termLen = term.length();
-        final int segmentLen = end - start + 1;
+        final int segmentLen = end - start;
         for (int i = 0; i < Math.min(termLen, segmentLen); i++) { // final - prompt for compiler to optimize
-            int diff = term.charAt(i) - vocabStr.charAt(start + i);
+            int diff = term.charAt(i) - sequence.charAt(start + i);
             if (diff != 0) return diff;
         }
         if (prefix || termLen == segmentLen) return 0;

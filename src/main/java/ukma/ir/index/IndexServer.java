@@ -22,7 +22,7 @@ public class IndexServer {
     private static final int WORKERS = 3;
     private Path LIBRARY = Paths.get("G:\\project\\library\\custom");
     private static final String TEMP_PARTICLES = "data/dictionary/dp%d.txt";
-    private static final String TERM_INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
+    private static final String INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
     private static final long WORKERS_MEMORY_LIMIT = Math.round(Runtime.getRuntime().maxMemory() * 0.5);
     private static final long MAX_MEMORY_LOAD = Math.round(Runtime.getRuntime().maxMemory() * 0.7);
     private static final char NEXT_DOC_SEP = ':'; // TERM_DOC
@@ -89,7 +89,7 @@ public class IndexServer {
         throw new NotImplementedException();
 //        if (!containsElement(term, IndexType.COORDINATE))
 //            throw new NoSuchElementException("no term \"" + term + "\" found");
-//        try (Stream<String> lines = Files.lines(Paths.get(String.format(TERM_INDEX_FLECKS, termPostingPath.get(term))))) {
+//        try (Stream<String> lines = Files.lines(Paths.get(String.format(INDEX_FLECKS, termPostingPath.get(term))))) {
 //            String target = lines
 //                    .filter(line -> line.startsWith(term))
 //                    .toArray(String[]::new)[0];
@@ -106,7 +106,7 @@ public class IndexServer {
 //        String path;
 //        switch (type) {
 //            case TERM:
-//                path = String.format(TERM_INDEX_FLECKS, termPostingPath.get(term));
+//                path = String.format(INDEX_FLECKS, termPostingPath.get(term));
 //                break;
 //            default:
 //                throw new IllegalArgumentException("incorrect type");
@@ -319,7 +319,7 @@ public class IndexServer {
         int prevTupleIndex = 0;
         int numFlecks = 0;
         int numTermsPerFleck = 1000;
-        String path = String.format(TERM_INDEX_FLECKS, numFlecks);
+        String path = String.format(INDEX_FLECKS, numFlecks);
         BufferedOutputStream fleck = new BufferedOutputStream(new FileOutputStream(new File(path)));
         long writtenBytes = 0; //for fleck
 
@@ -328,14 +328,14 @@ public class IndexServer {
         PriorityQueue<PTP> termsPQ = initPTP();
         for (int i = 0; !termsPQ.isEmpty(); i++) {
             if (i > numTermsPerFleck) {
-                path = String.format(TERM_INDEX_FLECKS, ++numFlecks);
+                path = String.format(INDEX_FLECKS, ++numFlecks);
                 fleck.close();
 
-                String editPath = String.format(TERM_INDEX_FLECKS, termData.get(prevTupleIndex).getFleckID());
+                String editPath = String.format(INDEX_FLECKS, termData.get(prevTupleIndex).getFleckID());
                 RandomAccessFile raf = new RandomAccessFile(editPath, "rw");
                 while (prevTupleIndex < termData.size()) {
-                    TermData nextTermData = termData.get(prevTupleIndex);
-                    raf.seek(nextTermData.getFleckPos() + prevTupleIndex++ * Integer.BYTES);
+                    TermData nextTermData = termData.get(prevTupleIndex++);
+                    raf.seek(nextTermData.getFleckPos());
                     raf.writeInt(nextTermData.getDocFr());
                 }
                 raf.close();
@@ -372,6 +372,11 @@ public class IndexServer {
                 assert p.getCurrState() == PTP.State.TERM_FR;
 
             // they will all have the same term
+            // write filler bytes for int docFr
+            for (int j = 0; j < Integer.BYTES; j++) {
+                fleck.write(0xff);
+                writtenBytes++;
+            }
             int deltaDocId = 0;
             while (!docIdPQ.isEmpty()) {
                 PriorityQueue<PTP> posPQ = new PriorityQueue<>(PTP.getComparator(PTP.State.POSITION));
@@ -424,7 +429,7 @@ public class IndexServer {
             termData.add(currentTermTermData);
         }
         TermData[] sortedTermData = termData.toArray(new TermData[0]);
-        index = new IndexBody(sortedTermData);
+        index = new IndexBody(sortedTermData, INDEX_FLECKS);
     }
 
     private long intToFleck(BufferedOutputStream fleck, int number) throws IOException {
