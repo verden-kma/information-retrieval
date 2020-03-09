@@ -3,7 +3,6 @@ package ukma.ir.index;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import edu.stanford.nlp.process.Morphology;
-import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 import ukma.ir.index.helpers.IndexBody;
 import ukma.ir.index.helpers.TermData;
 
@@ -17,9 +16,16 @@ import java.util.concurrent.CountDownLatch;
 import java.util.stream.Stream;
 
 import static java.lang.String.valueOf;
+import static ukma.ir.index.helpers.VLC.writeVLC;
+
+/*
+TODO: [docFr] [(docID TermFr)_0 ... (docID TermFr)_n-1] [(coord_0 ... coord_i-1)_0 ... (coord_0 ... coord_j-1)_n-1]
+                          ||              ||                   ||
+                          n               i                     j
+*/
 
 public class IndexServer {
-    private static final int WORKERS = 3;
+    private static final int WORKERS = 1;
     private Path LIBRARY = Paths.get("G:\\project\\library\\custom");
     private static final String TEMP_PARTICLES = "data/dictionary/dp%d.txt";
     private static final String INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
@@ -65,96 +71,26 @@ public class IndexServer {
         TERM, COORDINATE, JOKER
     }
 
-    // #region Deprecated
 
-    /**
-     * FIXME: 07-Mar-20 implement and use IndexBody's methods
-     */
     public boolean containsElement(String term) {
-        throw new NotImplementedException();
-//        switch (type) {
-//            case TERM:
-//                return termPostingPath.contains(term);
-//            case COORDINATE:
-//                return termPostingPath.contains(term);
-//            default:
-//                throw new IllegalArgumentException("incorrect type");
-//        }
+        return index.containsElement(term);
     }
 
-    /**
-     * FIXME: 07-Mar-20 RandomAccessFile instead of reading the whole file
-     */
-    public Map<Integer, ArrayList<Integer>> getTermDocCoord(String term) throws IOException {
-        throw new NotImplementedException();
-//        if (!containsElement(term, IndexType.COORDINATE))
-//            throw new NoSuchElementException("no term \"" + term + "\" found");
-//        try (Stream<String> lines = Files.lines(Paths.get(String.format(INDEX_FLECKS, termPostingPath.get(term))))) {
-//            String target = lines
-//                    .filter(line -> line.startsWith(term))
-//                    .toArray(String[]::new)[0];
-//            return parseCoords(target);
-//        }
+    public int[][] getTermData(String term) {
+        return index.getTermData(term);
     }
 
-    /**
-     * FIXME: 07-Mar-20 RandomAccessFile instead of reading the whole file
-     */
-    public ArrayList<Integer> getPostings(String term) {
-        throw new NotImplementedException();
-//        if (!containsElement(term, type)) throw new NoSuchElementException("No such element found!");
-//        String path;
-//        switch (type) {
-//            case TERM:
-//                path = String.format(INDEX_FLECKS, termPostingPath.get(term));
-//                break;
-//            default:
-//                throw new IllegalArgumentException("incorrect type");
-//        }
-//
-//        try (BufferedReader br = new BufferedReader(new FileReader(new File(path)))) {
-//            String search = br.readLine();
-//            while (search != null) {
-//                if (search.startsWith(term)) {
-//                    String postings = search.substring(search.indexOf(NEXT_DOC_SEP) + 1); // length of a char
-//                    ArrayList<Integer> pList = new ArrayList<>();
-//                    for (String docID : postings.split(valueOf(NEXT_DOC_SEP)))
-//                        pList.add(Integer.parseInt(docID.substring(0, docID.indexOf(DOC_COORD_SEP))));
-//                    return pList;
-//                }
-//                search = br.readLine();
-//            }
-//        } catch (IOException e) {
-//            e.printStackTrace();
-//            throw new NoSuchElementException("cannot find file specified");
-//        }
-//        throw new NoSuchElementException("index file is found but it does not contain the element specified");
+    public int[] getPostings(String term) {
+        return index.getPostings(term);
     }
 
-    /**
-     * FIXME: 07-Mar-20 adapt for dictionary as a string
-     */
-    public Iterable<String> startWith(String prefix) {
-        throw new NotImplementedException();
-        // return termPostingPath.keysWithPrefix(prefix);
+    public String[] startWith(String prefix) {
+        return index.startWith(prefix);
     }
 
-    /**
-     * FIXME: 07-Mar-20 adapt for dictionary as a string
-     */
-    public Iterable<String> endWith(String suffix) {
-        throw new NotImplementedException();
-//        StringBuilder reverser = new StringBuilder(suffix.length());
-//        reverser.append(suffix).reverse();
-//        // TST returns sorted keys and so makes it inefficient to add them into another TST
-//        Collection<String> reversed = reversedTermPostingPath.keysWithPrefix(reverser.toString());
-//        List<String> straight = new ArrayList<>(reversed.size());
-//        for (String rev : reversed)
-//            straight.add(reversedTermPostingPath.get(rev));
-//        return straight;
+    public String[] endWith(String suffix) {
+        return index.endWith(suffix);
     }
-
-    // #endregion
 
     public String getDocName(int docID) {
         return Paths.get(docId.inverse().get(docID)).getFileName().toString();
@@ -175,6 +111,12 @@ public class IndexServer {
 
     private static String normalize(String token, Morphology m) {
         return m.stem(token.toLowerCase().replaceAll("\\W", ""));
+    }
+
+    private long startTime = System.currentTimeMillis();
+
+    private long getTime() {
+        return (System.currentTimeMillis() - startTime) / 1000;
     }
 
     public void buildInvertedIndex() {
@@ -311,39 +253,23 @@ public class IndexServer {
         System.gc();
     }
 
+    // suspect bugs on writing vlc after docFr 35th byte -> int vlc vlc [ok] -> int [wrong] ...
     private void transferMerge() throws IOException {
         saveParticles();
         dictionary = null;
 
         List<TermData> termData = new ArrayList<>();
-        int prevTupleIndex = 0;
+        int tupleIndex = 0;
         int numFlecks = 0;
         int numTermsPerFleck = 1000;
         String path = String.format(INDEX_FLECKS, numFlecks);
         BufferedOutputStream fleck = new BufferedOutputStream(new FileOutputStream(new File(path)));
-        long writtenBytes = 0; //for fleck
+        long writtenBytes = 0; //for in-fleck position
 
         System.out.println("Start transfer Merge");
 
         PriorityQueue<PTP> termsPQ = initPTP();
         for (int i = 0; !termsPQ.isEmpty(); i++) {
-            if (i > numTermsPerFleck) {
-                path = String.format(INDEX_FLECKS, ++numFlecks);
-                fleck.close();
-
-                String editPath = String.format(INDEX_FLECKS, termData.get(prevTupleIndex).getFleckID());
-                RandomAccessFile raf = new RandomAccessFile(editPath, "rw");
-                while (prevTupleIndex < termData.size()) {
-                    TermData nextTermData = termData.get(prevTupleIndex++);
-                    raf.seek(nextTermData.getFleckPos());
-                    raf.writeInt(nextTermData.getDocFr());
-                }
-                raf.close();
-
-                fleck = new BufferedOutputStream(new FileOutputStream(new File(path)));
-                writtenBytes = 0;
-                i = 0;
-            }
 
             for (PTP p : termsPQ)
                 assert p.getCurrState() == PTP.State.DOC_ID;
@@ -352,19 +278,18 @@ public class IndexServer {
 
             assert termHead != null;
 
-            TermData currentTermTermData = new TermData(termHead.getCurrTerm(), numFlecks, writtenBytes);
+            TermData currentTermData = new TermData(termHead.getCurrTerm(), numFlecks, writtenBytes);
 
             PriorityQueue<PTP> docIdPQ = new PriorityQueue<>(PTP.getComparator(PTP.State.DOC_ID));
-            docIdPQ.add(termHead.getNext());
-
+            docIdPQ.add(termHead.getNext()); // state == post docID
+// add termHead.term to docsFr
             Set<Integer> docsFr = new HashSet<>();
             while (!termsPQ.isEmpty() && termHead.equalsTerm(termsPQ.peek())) {// come through all terms
                 PTP sameTerm = termsPQ.poll();
 
                 assert sameTerm != null;
 
-                docsFr.add(sameTerm.getNext().getCurrDocID()); // state == post docID
-                docIdPQ.add(sameTerm); // there will be lots of elements but only few duplicates
+                docIdPQ.add(sameTerm.getNext());  // state == post docID
                 // (customer's file was split into 2+ particles)
             }
 
@@ -377,6 +302,7 @@ public class IndexServer {
                 fleck.write(0xff);
                 writtenBytes++;
             }
+
             int deltaDocId = 0;
             while (!docIdPQ.isEmpty()) {
                 PriorityQueue<PTP> posPQ = new PriorityQueue<>(PTP.getComparator(PTP.State.POSITION));
@@ -395,20 +321,21 @@ public class IndexServer {
                     posPQ.add(sameDocId.getNext());
                 }
 
+                docsFr.add(docIdHead.getCurrDocID());
                 deltaDocId = docIdHead.getCurrDocID() - deltaDocId;
-                writtenBytes += intToFleck(fleck, deltaDocId);
-                writtenBytes += intToFleck(fleck, totalTermFr);
+                writtenBytes += writeVLC(fleck, deltaDocId);
+                writtenBytes += writeVLC(fleck, totalTermFr);
 
                 while (!posPQ.isEmpty()) { // come through all coords of current doc
                     PTP nextPos = posPQ.poll();
 
                     assert nextPos != null; // nextPos cannot be null because at least docIdHead is in posPQ
                     int deltaPos = nextPos.getCurrPos();
-                    writtenBytes += intToFleck(fleck, deltaPos);
+                    writtenBytes += writeVLC(fleck, deltaPos);
 
                     while (nextPos.getCurrState() == PTP.State.POSITION) {
                         deltaPos = nextPos.getNext().getCurrPos() - deltaPos;
-                        writtenBytes += intToFleck(fleck, deltaPos);
+                        writtenBytes += writeVLC(fleck, deltaPos);
                     }
 
                     switch (nextPos.getCurrState()) {
@@ -425,26 +352,33 @@ public class IndexServer {
                     }
                 }
             }
-            currentTermTermData.setDocFr(docsFr.size());
-            termData.add(currentTermTermData);
+
+            assert (docsFr.size() != 0);
+            currentTermData.setDocFr(docsFr.size()); // == 0
+            termData.add(currentTermData);
+
+            if (i > numTermsPerFleck || termsPQ.isEmpty()) {
+                fleck.close();
+
+                String editPath = String.format(INDEX_FLECKS, termData.get(tupleIndex).getFleckID());
+                RandomAccessFile raf = new RandomAccessFile(editPath, "rw");
+                while (tupleIndex < termData.size()) {
+                    TermData nextTermData = termData.get(tupleIndex++);
+                    raf.seek(nextTermData.getFleckPos());
+                    raf.writeInt(nextTermData.getDocFr());
+                }
+                raf.close();
+
+                if (!termsPQ.isEmpty()) {
+                    path = String.format(INDEX_FLECKS, ++numFlecks);
+                    fleck = new BufferedOutputStream(new FileOutputStream(new File(path)));
+                    writtenBytes = 0;
+                    i = 0;
+                }
+            }
         }
         TermData[] sortedTermData = termData.toArray(new TermData[0]);
         index = new IndexBody(sortedTermData, INDEX_FLECKS);
-    }
-
-    private long intToFleck(BufferedOutputStream fleck, int number) throws IOException {
-        byte[] vlc = new byte[5]; // 2^4*7 < 2^31 < 2^5*7
-
-        byte written = 5;
-        while (true) {
-            vlc[--written] = (byte) (number % 128);
-            if (number <= 128) break;
-            number /= 128;
-        }
-        vlc[vlc.length - 1] += 128;
-
-        fleck.write(vlc, written, vlc.length - written);
-        return written;
     }
 
     private PriorityQueue<PTP> initPTP() throws IOException {
@@ -587,26 +521,6 @@ public class IndexServer {
         }
     }
 
-    /**
-     * parses string representation of term's docID-coords set into a map
-     *
-     * @param line representing line postings with associated coordinates
-     * @return HashMap of posting-coords sets
-     */
-    private Map<Integer, ArrayList<Integer>> parseCoords(String line) {
-        throw new NotImplementedException();
-//        String[] spl_1 = line.split(valueOf(NEXT_DOC_SEP)); // 0th is the term then docID-positions sets
-//        Map<Integer, ArrayList<Integer>> result = new HashMap<>();
-//        for (int i = 1; i < spl_1.length; i++) {
-//            int coordStart = spl_1[i].indexOf(DOC_COORD_SEP);
-//            String[] coordTokens = spl_1[i].substring(coordStart + 1).split("\\s"); // 1 = length of DOC_COORD_SEP
-//            ArrayList<Integer> coordList = new ArrayList<>(coordTokens.length);
-//            for (String coord : coordTokens)
-//                coordList.add(Integer.parseInt(coord));
-//            result.put(Integer.parseInt(spl_1[i].substring(0, coordStart)), coordList);
-//        }
-//        return result;
-    }
 
     private class TermProvider {
         private BufferedReader br;
@@ -678,14 +592,5 @@ public class IndexServer {
         }
     }
 
-    private String showMemory() {
-        Runtime rt = Runtime.getRuntime();
-        return String.format("FREE memory: %.2f%%", (double) rt.freeMemory() / rt.maxMemory() * 100);
-    }
 
-    private long startTime = System.currentTimeMillis();
-
-    private long getTime() {
-        return (System.currentTimeMillis() - startTime) / 1000;
-    }
 }

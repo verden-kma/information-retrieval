@@ -1,11 +1,11 @@
 package ukma.ir.index.helpers;
 
-import sun.reflect.generics.reflectiveObjects.NotImplementedException;
-
-import java.io.FileNotFoundException;
+import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.util.NoSuchElementException;
+
+import static ukma.ir.index.helpers.VLC.readVLC;
 
 public class IndexBody {
     private int[][] dict; // 0th - start index of term, 1st - fleckID, 2nd - in-fleck start pos (1/2), 3rd - (2/2) 4rd - docFr
@@ -32,15 +32,16 @@ public class IndexBody {
     }
 
     public String[] endWith(String suffix) {
+        StringBuilder directer = new StringBuilder(12);
+        suffix = directer.append(suffix).reverse().toString();
         long sample = findTerm(suffix, revDict, reVocabStr, true);
         if (sample == -1) throw new NoSuchElementException("No term with suffix \"" + suffix + "\" found.");
 
         String[] reversed = edgeWith(suffix, sample, revDict, reVocabStr);
         // possible optimization: avoid creation of 1 String -> reverse using char[] while populating "matched[i]"
-        StringBuilder directer = new StringBuilder(12);
         for (int i = 0; i < reversed.length; i++) {
-            reversed[i] = directer.append(reversed[i]).reverse().toString();
             directer.setLength(0);
+            reversed[i] = directer.append(reversed[i]).reverse().toString();
         }
         return reversed;
     }
@@ -48,12 +49,12 @@ public class IndexBody {
     private String[] edgeWith(String suffix, long sample, int[][] revDict, String reVocabStr) {
         int topBound = findBound(suffix, sample, revDict, reVocabStr, true);
         int bottomBound = findBound(suffix, sample, revDict, reVocabStr, false);
-        assert (topBound < bottomBound);
-        String[] matched = new String[bottomBound - topBound];
-        for (int i = 0; i < matched.length; i++) {
+        assert (topBound <= bottomBound);
+        String[] matched = new String[bottomBound - topBound + 1];
+        for (int i = topBound, j = 0; i <= bottomBound; i++) {
             int begin = revDict[i][0];
             int end = i + 1 < revDict.length ? revDict[i + 1][0] : reVocabStr.length();
-            matched[i] = reVocabStr.substring(begin, end);
+            matched[j++] = reVocabStr.substring(begin, end);
         }
         return matched;
     }
@@ -63,59 +64,58 @@ public class IndexBody {
      *
      * @param term in index to search
      * @return array of docIDs which contain term
-     * @throws IOException if index data has been corrupted
+     * @throws NoSuchElementException if index data has been corrupted
      */
-    public int[] getPostings(String term) throws IOException {
-        int[][] fullInfo = getTermDocCoords(term);
+    public int[] getPostings(String term) {
+        int[][] fullInfo = getTermData(term);
         int[] res = new int[fullInfo.length];
-        for (int i = 0; i < res.length; i++) {
-            res[i] = fullInfo[i][0];
-        }
+        for (int i = 0; i < res.length; i++) res[i] = fullInfo[i][0];
+        // for (int i = 0; i < res.length; res[i++] = fullInfo[i][0]); test
         return res;
     }
 
     //TODO: 1) do not store docFr in memory
     // 2) use buffer https://stackoverflow.com/questions/5614206/buffered-randomaccessfile-java
+
     /**
      * find documents and positions at which term resides
      *
      * @param term in index to search
-     * @return 2-dim array, 1st dim - number of a docID, 2nd dim - docId, term frequency, coords
-     * @throws IOException if index data has been corrupted
+     * @return 2-dim array, 1st dim - number of a docID, 2nd dim - docId, coords;
+     * document frequency = length of the 1st dim, term fr. = (length of the 2nd dim) - 1
+     * or null if no such term found
+     * @throws NoSuchElementException if index data has been corrupted
      */
-    public int[][] getTermDocCoords(String term) throws IOException{
+    public int[][] getTermData(String term) {
         long termData = findTerm(term, dict, vocabStr, false);
-        if (termData == -1) throw new NoSuchElementException("Term \"" + term + "\" is absent.");
+        if (termData == -1) return null;
         int[] infoRow = dict[(int) (termData >> 32)];
         String path = String.format(FLECK_PATH, infoRow[1]);
         long inFleckPos = infoRow[2];
         inFleckPos <<= 32;
         inFleckPos |= infoRow[3];
+        assert inFleckPos < new File(path).length();
         try (RandomAccessFile raf = new RandomAccessFile(path, "r")) {
             raf.seek(inFleckPos);
             int docFr = raf.readInt();
+            System.out.println(raf.getFilePointer());
             int[][] termStat = new int[docFr][];
             assert (docFr == infoRow[4]);
             for (int i = 0; i < docFr; i++) {
                 int docID = readVLC(raf);
+                System.out.println(raf.getFilePointer());
                 int termFr = readVLC(raf);
-                termStat[i] = new int[termFr+2];
+                System.out.println(raf.getFilePointer());
+                termStat[i] = new int[termFr + 1];
                 termStat[i][0] = docID;
-                termStat[i][1] = termFr;
-                for (int j = 2; j < termFr + 2; j++) {
+                for (int j = 1; j < termStat[i].length; j++) {
                     termStat[i][j] = readVLC(raf);
+                    System.out.println(raf.getFilePointer());
                 }
             }
             return termStat;
-        }
-    }
-
-    private int readVLC(RandomAccessFile raf) throws IOException {
-        int res = 0;
-        while (true) {
-            byte next = raf.readByte();
-            if (next >= 0) res = res * 128 + next;
-            else return res * 128 + (next & 0b01111111);
+        } catch (IOException e) {
+            throw new NoSuchElementException("cannot find file specified");
         }
     }
 
@@ -149,10 +149,10 @@ public class IndexBody {
         revDict = new int[revTerms.length][2];
         for (int i = 0; i < revTerms.length; i++) {
             revDict[i][0] = reVocabStr.length();
-            int sepIndex = -1;
+            int sepIndex = 0;
             while (revTerms[i].charAt(++sepIndex) != oldIndexSep) ;
-            revDict[i][1] = Integer.parseInt(revTerms[i].subSequence(sepIndex++, revTerms[i].length()).toString()); // java 9 ???
-            reVocabStr.append(revTerms[i].subSequence(0, sepIndex));
+            reVocabStr.append(revTerms[i].subSequence(0, sepIndex++));
+            revDict[i][1] = Integer.parseInt(revTerms[i].subSequence(sepIndex, revTerms[i].length()).toString()); // java 9 ???
         }
         this.reVocabStr = reVocabStr.toString();
     }
@@ -170,8 +170,8 @@ public class IndexBody {
         int lo = 0, hi = dict.length;
         int lastCut = dict.length;
         while (lo <= hi) {
-            int mid = lo + (hi - lo) >> 1;
-            lastCut = (lastCut - mid) & 0x7fffffff; // better than "return (a < 0) ? -a : a"
+            int mid = lo + ((hi - lo) >> 1);
+            lastCut = Math.abs(lastCut - mid);
             int start = dict[mid][0];
             int end = mid + 1 < dict.length ? dict[mid + 1][0] : vocabStr.length();
             int cmp = cmpStrChars(term, vocabStr, start, end, prefix);
@@ -193,7 +193,7 @@ public class IndexBody {
         int hi = findTop ? base : (int) (base + (termData & 0x00000000ffffffffL));
         int mid;
         do {
-            mid = lo + (hi - lo) >> 1;
+            mid = lo + ((hi - lo) >> 1);
             int start = dict[mid][0];
             int end = mid + 1 < dict.length ? dict[mid + 1][0] : vocabStr.length();
 

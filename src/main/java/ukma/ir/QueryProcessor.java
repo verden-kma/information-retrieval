@@ -34,18 +34,26 @@ public class QueryProcessor {
                     // else do no intersection as the result is empty if any entry is empty
                     Set<Integer> inDocs;
                     if (!includeTerms.isEmpty() && indexService.containsElement(includeTerms.get(0))) {
-                        inDocs = new HashSet<>(indexService.getPostings(includeTerms.get(0)));
+                        int[] postings = indexService.getPostings(includeTerms.get(0));
+                        inDocs = new HashSet<>(postings.length, 1); // do not expand
+                        for (int i = 0; i < postings.length; inDocs.add(postings[i++]));
+
                         includeTerms.forEach(term -> {
-                            ArrayList<Integer> posting = indexService.getPostings(term);
-                            if (posting != null) inDocs.retainAll(posting); // intersect
+                            int[] posting = indexService.getPostings(term);
+                            if (posting != null) { // intersect
+                                for (int p : posting)
+                                    if (!inDocs.contains(p))
+                                        inDocs.remove(p);
+                            }
                         });
-                    }
-                    else return;
+                    } else return;
+
                     Set<Integer> exDocs = new HashSet<>();
                     for (String term : excludeTerms) {
                         if (term == null) continue; // normalizer might return null
-                        ArrayList<Integer> posting = indexService.getPostings(term);
-                        if (posting != null) exDocs.addAll(posting);
+                        int[] posting = indexService.getPostings(term);
+                        if (posting != null)
+                            for (int i = 0; i < posting.length; exDocs.add(posting[i++]));
                     }
 
                     inDocs.removeAll(exDocs);
@@ -81,17 +89,24 @@ public class QueryProcessor {
                 .map(Path::toString).sorted().collect(Collectors.toList());
     }
 
-    private List<int[]> positionalIntersect(String t1, String t2, int dist) throws IOException {
+    private List<int[]> positionalIntersect(String t1, String t2, int dist) {
         ArrayList<int[]> answer = new ArrayList<>();
-        Map<Integer, ArrayList<Integer>> docCoordMap1 = indexService.getTermDocCoord(t1);
-        Map<Integer, ArrayList<Integer>> docCoordMap2 = indexService.getTermDocCoord(t2);
-        Integer[] docs1 = docCoordMap1.keySet().toArray(new Integer[0]);
-        Integer[] docs2 = docCoordMap2.keySet().toArray(new Integer[0]);
-        for (int i = 0, j = 0; i < docs1.length && j < docs2.length; ) {
-            if (docs1[i].equals(docs2[j])) {
+        int[][] docCoords1 = indexService.getTermData(t1);
+        int[][] docCoords2 = indexService.getTermData(t2);
+
+        int[] docIDs1 = new int[docCoords1.length];
+        for (int i = 0; i < docIDs1.length; i++)
+            docIDs1[i] = docCoords1[i][0];
+
+        int[] docIDs2 = new int[docCoords1.length];
+        for (int i = 0; i < docIDs1.length; i++)
+            docIDs2[i] = docCoords2[i][0];
+
+        for (int i = 0, j = 0; i < docIDs1.length && j < docIDs2.length; ) {
+            if (docIDs1[i] == docIDs2[j]) {
                 Queue<Integer> candidates = new ArrayDeque<>();
-                ArrayList<Integer> coords1 = docCoordMap1.get(docs1[i]);
-                ArrayList<Integer> coords2 = docCoordMap2.get(docs2[j]);
+                int[] coords1 = docCoords1[docIDs1[i]];
+                int[] coords2 = docCoords2[docIDs2[j]];
                 for (Integer pos1 : coords1) {
                     for (Integer pos2 : coords2)
                         if (pos1 - pos2 < dist) candidates.add(pos2);
@@ -99,15 +114,76 @@ public class QueryProcessor {
 
                     while (candidates.size() > 0 && candidates.peek() - pos1 > dist) candidates.remove();
                     for (int k = 0; k < candidates.size()/* && k < 10*/; k++)
-                        answer.add(new int[]{docs1[i], pos1, candidates.remove()});
+                        answer.add(new int[]{docIDs1[i], pos1, candidates.remove()});
                 }
                 i++;
                 j++;
-            } else if (docs1[i].compareTo(docs2[j]) < 0) i++;
+            } else if (docIDs1[i] < docIDs2[j]) i++;
             else j++;
         }
         return answer;
     }
+
+    // a*b*c && *abc && abc*
+    // NOT *abc* || ab**c
+    // TODO: use simple boolean retrieval to facilitate mixed search
+    public Collection<String> processJokerQuery(String query) {
+        String[] tokens = query.split("\\s+");
+        for (String token : tokens)
+            if (!token.matches("(\\*\\w+(\\*\\w+)?)|(\\w+\\*\\w*(\\w\\*\\w*)?)"))
+                throw new IllegalArgumentException('"' + query + '"' + " is not a valid joker query");
+
+        for (int i = 0; i < tokens.length; i++)
+            tokens[i] = tokens[i].toLowerCase(); // stemmer: searchings -> searching; searching -> search
+
+        Set<Integer> validFiles = new HashSet<>();
+        for (String term : tokens) {
+            Set<Integer> termContribution = new HashSet<>();
+            Set<String> matchPref = new TreeSet<>();
+            Set<String> matchSuf = new TreeSet<>();
+
+            if (term.charAt(0) != '*') {
+                matchPref.addAll(Arrays.asList(indexService.startWith(term.substring(0, term.indexOf("*")))));
+                // no terms match given non-empty prefix
+                if (matchPref.isEmpty()) return new ArrayList<>(0);
+            }
+
+            if (term.charAt(term.length() - 1) != '*') {
+                matchSuf.addAll(Arrays.asList(indexService.endWith(term.substring(term.lastIndexOf('*') + 1))));
+                if (matchSuf.isEmpty()) return new ArrayList<>(0);
+            }
+
+            Set<String> primeMatch;
+            if (matchPref.isEmpty())
+                primeMatch = matchSuf;
+            else if (matchSuf.isEmpty())
+                primeMatch = matchPref;
+            else {
+                matchPref.retainAll(matchSuf);
+                primeMatch = matchPref;
+            }
+
+            Collection<String> valid;
+            if (term.indexOf('*') != term.lastIndexOf('*')) {
+                String pattern = ".*" + term.substring(term.indexOf('*') + 1, term.lastIndexOf('*')) + ".*";
+                valid = primeMatch.stream().filter(t -> t.matches(pattern)).collect(Collectors.toList());
+            } else valid = primeMatch;
+
+            for (String v : valid) {
+                int[] postings = indexService.getPostings(v);
+                for (int i = 0; i < postings.length; termContribution.add(postings[i++]));
+            }
+
+            if (validFiles.isEmpty()) validFiles.addAll(termContribution); // set base
+            else validFiles.retainAll(termContribution); // intersect
+            if (validFiles.isEmpty()) return new ArrayList<>(0); // check for empty intersection
+        }
+        List<String> result = new ArrayList<>();
+        for (Integer docID : validFiles)
+            result.add(indexService.getDocName(docID));
+        return result;
+    }
+
 
     private List<Integer> intersect(Integer[] basePost, Integer[] post) {
         List<Integer> res = new ArrayList<>();
@@ -139,65 +215,5 @@ public class QueryProcessor {
             }
         }
         return res;
-    }
-
-    // a*b*c && *abc && abc*
-    // NOT *abc* || ab**c
-    // TODO: use simple boolean retrieval to facilitate mixed search
-    public Collection<String> processJokerQuery(String query) {
-        String[] tokens = query.split("\\s+");
-        for (String token : tokens)
-            if (!token.matches("(\\*\\w+(\\*\\w+)?)|(\\w+\\*\\w*(\\w\\*\\w*)?)"))
-                throw new IllegalArgumentException('"' + query + '"' + " is not a valid joker query");
-
-        for (int i = 0; i < tokens.length; i++)
-            tokens[i] = tokens[i].toLowerCase(); // stemmer: searchings -> searching; searching -> search
-
-        Set<Integer> validFiles = new HashSet<>();
-        for (String term : tokens) {
-            Set<Integer> termContribution = new HashSet<>();
-            Set<String> matchPref = new TreeSet<>();
-            Set<String> matchSuf = new TreeSet<>();
-
-            if (term.charAt(0) != '*') {
-                for (String pref : indexService.startWith(term.substring(0, term.indexOf("*"))))
-                    matchPref.add(pref);
-                // no terms match given non-empty prefix
-                if (matchPref.isEmpty()) return new ArrayList<>(0);
-            }
-
-            if (term.charAt(term.length() - 1) != '*') {
-                for (String suf : indexService.endWith(term.substring(term.lastIndexOf('*') + 1)))
-                    matchSuf.add(suf);
-                if (matchSuf.isEmpty()) return new ArrayList<>(0);
-            }
-
-            Set<String> primeMatch;
-            if (matchPref.isEmpty())
-                primeMatch = matchSuf;
-            else if (matchSuf.isEmpty())
-                primeMatch = matchPref;
-            else {
-                matchPref.retainAll(matchSuf);
-                primeMatch = matchPref;
-            }
-
-            Collection<String> valid;
-            if (term.indexOf('*') != term.lastIndexOf('*')) {
-                String pattern = ".*" + term.substring(term.indexOf('*') + 1, term.lastIndexOf('*')) + ".*";
-                valid = primeMatch.stream().filter(t -> t.matches(pattern)).collect(Collectors.toList());
-            } else valid = primeMatch;
-
-            for (String v : valid)
-                termContribution.addAll(indexService.getPostings(v));
-
-            if (validFiles.isEmpty()) validFiles.addAll(termContribution); // set base
-            else validFiles.retainAll(termContribution); // intersect
-            if (validFiles.isEmpty()) return new ArrayList<>(0); // check for empty intersection
-        }
-        List<String> result = new ArrayList<>();
-        for (Integer docID : validFiles)
-            result.add(indexService.getDocName(docID));
-        return result;
     }
 }
