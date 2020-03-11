@@ -20,7 +20,7 @@ public class VLC {
         return vlc.length - front;
     }
 
-    public static int readVLC(RandomAccessFile raf) throws IOException {
+    static int readVLC(RandomAccessFile raf) throws IOException {
         int res = 0;
         while (true) {
             byte next = raf.readByte();

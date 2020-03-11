@@ -98,19 +98,15 @@ public class IndexBody {
         try (RandomAccessFile raf = new RandomAccessFile(path, "r")) {
             raf.seek(inFleckPos);
             int docFr = raf.readInt();
-            System.out.println(raf.getFilePointer());
             int[][] termStat = new int[docFr][];
             assert (docFr == infoRow[4]);
             for (int i = 0; i < docFr; i++) {
                 int docID = readVLC(raf);
-                System.out.println(raf.getFilePointer());
                 int termFr = readVLC(raf);
-                System.out.println(raf.getFilePointer());
                 termStat[i] = new int[termFr + 1];
                 termStat[i][0] = docID;
                 for (int j = 1; j < termStat[i].length; j++) {
                     termStat[i][j] = readVLC(raf);
-                    System.out.println(raf.getFilePointer());
                 }
             }
             return termStat;
@@ -134,27 +130,27 @@ public class IndexBody {
         }
         this.vocabStr = vocabStr.toString();
 
-        vocabStr.setLength(0);
-        CharSequence[] revTerms = new CharSequence[sortedTermData.length];
-        char oldIndexSep = '%';
-        for (int i = 0; i < sortedTermData.length; i++) {
-            StringBuilder reverser = new StringBuilder(sortedTermData[i].getTerm().length() + 1 + intDigits(i));
-            reverser.append(sortedTermData[i].getTerm()).reverse().append(oldIndexSep).append(i);
-            sortedTermData[i] = null;
-            revTerms[i] = reverser;
-        }
-
-        Quick3string.sort(revTerms);
-        StringBuilder reVocabStr = new StringBuilder();
-        revDict = new int[revTerms.length][2];
-        for (int i = 0; i < revTerms.length; i++) {
-            revDict[i][0] = reVocabStr.length();
-            int sepIndex = 0;
-            while (revTerms[i].charAt(++sepIndex) != oldIndexSep) ;
-            reVocabStr.append(revTerms[i].subSequence(0, sepIndex++));
-            revDict[i][1] = Integer.parseInt(revTerms[i].subSequence(sepIndex, revTerms[i].length()).toString()); // java 9 ???
-        }
-        this.reVocabStr = reVocabStr.toString();
+//        vocabStr.setLength(0);
+//        CharSequence[] revTerms = new CharSequence[sortedTermData.length];
+//        char oldIndexSep = '%';
+//        for (int i = 0; i < sortedTermData.length; i++) {
+//            StringBuilder reverser = new StringBuilder(sortedTermData[i].getTerm().length() + 1 + intDigits(i));
+//            reverser.append(sortedTermData[i].getTerm()).reverse().append(oldIndexSep).append(i);
+//            sortedTermData[i] = null;
+//            revTerms[i] = reverser;
+//        }
+//
+//        Quick3string.sort(revTerms);
+//        StringBuilder reVocabStr = new StringBuilder();
+//        revDict = new int[revTerms.length][2];
+//        for (int i = 0; i < revTerms.length; i++) {
+//            revDict[i][0] = reVocabStr.length();
+//            int sepIndex = 0;
+//            while (revTerms[i].charAt(++sepIndex) != oldIndexSep) ;
+//            reVocabStr.append(revTerms[i].subSequence(0, sepIndex++));
+//            revDict[i][1] = Integer.parseInt(revTerms[i].subSequence(sepIndex, revTerms[i].length()).toString()); // java 9 ???
+//        }
+//        this.reVocabStr = reVocabStr.toString();
     }
 
     /**

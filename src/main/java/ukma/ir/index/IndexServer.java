@@ -20,12 +20,12 @@ import static ukma.ir.index.helpers.VLC.writeVLC;
 
 /*
 TODO: [docFr] [(docID TermFr)_0 ... (docID TermFr)_n-1] [(coord_0 ... coord_i-1)_0 ... (coord_0 ... coord_j-1)_n-1]
-                          ||              ||                   ||
-                          n               i                     j
+         ||              ||                   ||
+          n               i                    j
 */
 
 public class IndexServer {
-    private static final int WORKERS = 1;
+    private static final int WORKERS = 3;
     private Path LIBRARY = Paths.get("G:\\project\\library\\custom");
     private static final String TEMP_PARTICLES = "data/dictionary/dp%d.txt";
     private static final String INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
@@ -261,7 +261,7 @@ public class IndexServer {
         List<TermData> termData = new ArrayList<>();
         int tupleIndex = 0;
         int numFlecks = 0;
-        int numTermsPerFleck = 1000;
+        int numTermsPerFleck = 10000;
         String path = String.format(INDEX_FLECKS, numFlecks);
         BufferedOutputStream fleck = new BufferedOutputStream(new FileOutputStream(new File(path)));
         long writtenBytes = 0; //for in-fleck position
@@ -330,12 +330,10 @@ public class IndexServer {
                     PTP nextPos = posPQ.poll();
 
                     assert nextPos != null; // nextPos cannot be null because at least docIdHead is in posPQ
-                    int deltaPos = nextPos.getCurrPos();
-                    writtenBytes += writeVLC(fleck, deltaPos);
+                    writtenBytes += writeVLC(fleck, nextPos.getCurrPos());
 
                     while (nextPos.getCurrState() == PTP.State.POSITION) {
-                        deltaPos = nextPos.getNext().getCurrPos() - deltaPos;
-                        writtenBytes += writeVLC(fleck, deltaPos);
+                        writtenBytes += writeVLC(fleck, -(nextPos.getCurrPos() - nextPos.getNext().getCurrPos()));
                     }
 
                     switch (nextPos.getCurrState()) {
