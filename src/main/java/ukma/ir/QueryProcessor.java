@@ -11,6 +11,14 @@ public class QueryProcessor {
 
     private final IndexServer indexService = IndexServer.getInstance();
 
+    private void decode(int[] encoded) {
+        for (int i = 0, nextDoc = 0; i < encoded.length; encoded[i] = nextDoc += encoded[i++]) ;
+    }
+
+    private void addAllDecoded(Collection<Integer> collection, int[] postings) {
+        for (int i = 0, nextDoc = 0; i < postings.length; collection.add(nextDoc += postings[i++])) ;
+    }
+
     /**
      * @param q - query to be processed
      * @return list of documents that match a given query
@@ -36,12 +44,13 @@ public class QueryProcessor {
                     if (!includeTerms.isEmpty() && indexService.containsElement(includeTerms.get(0))) {
                         int[] postings = indexService.getPostings(includeTerms.get(0));
                         inDocs = new HashSet<>(postings.length, 1); // do not expand
-                        for (int i = 0, nextDoc = 0; i < postings.length; inDocs.add(nextDoc += postings[i++]));
+                        addAllDecoded(inDocs, postings);
 
                         includeTerms.forEach(term -> {
                             int[] posting = indexService.getPostings(term);
                             if (posting != null) { // intersect
-                                for (int p : posting)
+                                decode(posting);
+                                for (int p : posting) // retainAll
                                     if (!inDocs.contains(p))
                                         inDocs.remove(p);
                             }
@@ -53,7 +62,7 @@ public class QueryProcessor {
                         if (term == null) continue; // normalizer might return null
                         int[] posting = indexService.getPostings(term);
                         if (posting != null)
-                            for (int i = 0, nextDoc = 0; i < posting.length; exDocs.add(nextDoc += posting[i++]));
+                            addAllDecoded(exDocs, posting);
                     }
 
                     inDocs.removeAll(exDocs);
@@ -91,27 +100,32 @@ public class QueryProcessor {
 
     private List<int[]> positionalIntersect(String t1, String t2, int dist) {
         ArrayList<int[]> answer = new ArrayList<>();
-        int[][] docCoords1 = indexService.getTermData(t1);
-        int[][] docCoords2 = indexService.getTermData(t2);
+        int[][] tData_1 = indexService.getTermData(t1);
+        int[][] tData_2 = indexService.getTermData(t2);
 
-        int[] docIDs1 = new int[docCoords1.length];
+        int[] docIDs1 = new int[tData_1.length];
         for (int i = 0, nextDoc = 0; i < docIDs1.length; i++)
-            docIDs1[i] = nextDoc += docCoords1[i][0];
+            docIDs1[i] = nextDoc += tData_1[i][0];
 
-        int[] docIDs2 = new int[docCoords1.length];
-        for (int i = 0, nextDoc = 0; i < docIDs1.length; i++)
-            docIDs2[i] = nextDoc += docCoords2[i][0];
+        for (int i = 0; i < tData_1.length; i++) {
+            tData_1[i] = Arrays.copyOfRange(tData_1[i], 1, tData_1[i].length);
+            decode(tData_1[i]);
+        }
+
+        int[] docIDs2 = new int[tData_1.length];
+        for (int j = 0, nextDoc = 0; j < tData_2.length; j++)
+            docIDs2[j] = nextDoc += tData_2[j][0];
+
+        for (int j = 0; j < tData_2.length; j++) {
+            tData_2[j] = Arrays.copyOfRange(tData_2[j], 1, tData_2[j].length);
+            decode(tData_2[j]);
+        }
 
         for (int i = 0, j = 0; i < docIDs1.length && j < docIDs2.length; ) {
             if (docIDs1[i] == docIDs2[j]) {
                 Queue<Integer> candidates = new ArrayDeque<>();
-                int[] coords1 = docCoords1[docIDs1[i]];
-                for (int k = 0, pos = 0; k < coords1.length; k++)
-                    coords1[k] = pos += coords1[k];
-
-                int[] coords2 = docCoords2[docIDs2[j]];
-                for (int k = 0, pos = 0; k < coords2.length; k++)
-                    coords2[k] = pos += coords2[k];
+                int[] coords1 = tData_1[i];
+                int[] coords2 = tData_2[j];
 
                 for (Integer pos1 : coords1) {
                     for (Integer pos2 : coords2)
@@ -119,7 +133,7 @@ public class QueryProcessor {
                         else if (pos2 > pos1) break;
 
                     while (candidates.size() > 0 && candidates.peek() - pos1 > dist) candidates.remove();
-                    for (int k = 0; k < candidates.size()/* && k < 10*/; k++)
+                    for (int k = 0; k < candidates.size(); k++)
                         answer.add(new int[]{docIDs1[i], pos1, candidates.remove()});
                 }
                 i++;
@@ -177,7 +191,7 @@ public class QueryProcessor {
 
             for (String v : valid) {
                 int[] postings = indexService.getPostings(v);
-                for (int i = 0, nextDoc = 0; i < postings.length; termContribution.add(nextDoc += postings[i++]));
+                for (int i = 0, nextDoc = 0; i < postings.length; termContribution.add(nextDoc += postings[i++])) ;
             }
 
             if (validFiles.isEmpty()) validFiles.addAll(termContribution); // set base

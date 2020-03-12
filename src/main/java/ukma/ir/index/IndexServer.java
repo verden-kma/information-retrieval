@@ -303,7 +303,7 @@ public class IndexServer {
                 writtenBytes++;
             }
 
-            int deltaDocId = 0;
+            int prevDocId = 0;
             while (!docIdPQ.isEmpty()) {
                 PriorityQueue<PTP> posPQ = new PriorityQueue<>(PTP.getComparator(PTP.State.POSITION));
                 PTP docIdHead = docIdPQ.poll();
@@ -322,8 +322,7 @@ public class IndexServer {
                 }
 
                 docsFr.add(docIdHead.getCurrDocID());
-                deltaDocId = docIdHead.getCurrDocID() - deltaDocId;
-                writtenBytes += writeVLC(fleck, deltaDocId);
+                writtenBytes += writeVLC(fleck, -(prevDocId - (prevDocId = docIdHead.getCurrDocID())));
                 writtenBytes += writeVLC(fleck, totalTermFr);
 
                 while (!posPQ.isEmpty()) { // come through all coords of current doc

@@ -115,10 +115,18 @@ public class IndexBody {
         }
     }
 
+//    private void showFreeMemory() {
+//        Runtime rt = Runtime.getRuntime();
+//        System.out.println("Free memory: " + (double)rt.freeMemory()/rt.maxMemory());
+//    }
+
     private void buildDictionary(TermData[] sortedTermData) {
         StringBuilder vocabStr = new StringBuilder();
         dict = new int[sortedTermData.length][5];
         for (int i = 0; i < sortedTermData.length; i++) {
+
+          //  showFreeMemory();
+
             int[] termData = dict[i];
             TermData currTermData = sortedTermData[i];
             termData[0] = vocabStr.length();
@@ -130,27 +138,33 @@ public class IndexBody {
         }
         this.vocabStr = vocabStr.toString();
 
-//        vocabStr.setLength(0);
-//        CharSequence[] revTerms = new CharSequence[sortedTermData.length];
-//        char oldIndexSep = '%';
-//        for (int i = 0; i < sortedTermData.length; i++) {
-//            StringBuilder reverser = new StringBuilder(sortedTermData[i].getTerm().length() + 1 + intDigits(i));
-//            reverser.append(sortedTermData[i].getTerm()).reverse().append(oldIndexSep).append(i);
-//            sortedTermData[i] = null;
-//            revTerms[i] = reverser;
-//        }
-//
-//        Quick3string.sort(revTerms);
-//        StringBuilder reVocabStr = new StringBuilder();
-//        revDict = new int[revTerms.length][2];
-//        for (int i = 0; i < revTerms.length; i++) {
-//            revDict[i][0] = reVocabStr.length();
-//            int sepIndex = 0;
-//            while (revTerms[i].charAt(++sepIndex) != oldIndexSep) ;
-//            reVocabStr.append(revTerms[i].subSequence(0, sepIndex++));
-//            revDict[i][1] = Integer.parseInt(revTerms[i].subSequence(sepIndex, revTerms[i].length()).toString()); // java 9 ???
-//        }
-//        this.reVocabStr = reVocabStr.toString();
+        System.out.println("inverse");
+     //   showFreeMemory();
+
+        vocabStr.setLength(0);
+        CharSequence[] revTerms = new CharSequence[sortedTermData.length];
+        char oldIndexSep = '%';
+        for (int i = 0; i < sortedTermData.length; i++) {
+         //   showFreeMemory();
+            StringBuilder reverser = new StringBuilder(sortedTermData[i].getTerm().length() + 1 + intDigits(i));
+            reverser.append(sortedTermData[i].getTerm()).reverse().append(oldIndexSep).append(i);
+            sortedTermData[i] = null;
+            revTerms[i] = reverser;
+        }
+
+        System.out.println("last phase");
+        Quick3string.sort(revTerms);
+        StringBuilder reVocabStr = new StringBuilder();
+        revDict = new int[revTerms.length][2];
+        for (int i = 0; i < revTerms.length; i++) {
+         //   showFreeMemory();
+            revDict[i][0] = reVocabStr.length();
+            int sepIndex = 0;
+            while (revTerms[i].charAt(++sepIndex) != oldIndexSep) ;
+            reVocabStr.append(revTerms[i].subSequence(0, sepIndex++));
+            revDict[i][1] = Integer.parseInt(revTerms[i].subSequence(sepIndex, revTerms[i].length()).toString()); // java 9 ???
+        }
+        this.reVocabStr = reVocabStr.toString();
     }
 
     /**
@@ -187,6 +201,8 @@ public class IndexBody {
         int base = (int) (termData >> 32);
         int lo = findTop ? (int) (base - (termData & 0x00000000ffffffffL)) : base;
         int hi = findTop ? base : (int) (base + (termData & 0x00000000ffffffffL));
+        lo = Math.max(0, lo);
+        hi = Math.min(dict.length - 1, hi);
         int mid;
         do {
             mid = lo + ((hi - lo) >> 1);
