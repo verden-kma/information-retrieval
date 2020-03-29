@@ -3,11 +3,12 @@ package ukma.ir.index.helpers;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.util.Iterator;
 import java.util.NoSuchElementException;
 
 import static ukma.ir.index.helpers.VLC.readVLC;
 
-public class IndexBody {
+public class IndexBody implements Iterable<String> {
     private int[][] dict; // 0th - start index of term, 1st - fleckID, 2nd - in-fleck start pos (1/2), 3rd - (2/2) 4rd - docFr
     private int[][] revDict;
     private String vocabStr;
@@ -74,15 +75,16 @@ public class IndexBody {
         return res;
     }
 
-    //TODO: 1) do not store docFr in memory
+    //TODO: optimization
+    // 1) do not store docFr in memory
     // 2) use buffer https://stackoverflow.com/questions/5614206/buffered-randomaccessfile-java
 
     /**
      * find documents and positions at which term resides
      *
      * @param term in index to search
-     * @return 2-dim array, 1st dim - number of a docID, 2nd dim - docId, coords;
-     * document frequency = length of the 1st dim, term fr. = (length of the 2nd dim) - 1
+     * @return 2-dim array, 1st dim - ordinal of a docID, 2nd dim - docId, coords;<br>
+     * document frequency = length of the 1st dim,<br> term fr. = (length of the 2nd dim) - 1
      * or null if no such term found
      * @throws NoSuchElementException if index data has been corrupted
      */
@@ -124,9 +126,6 @@ public class IndexBody {
         StringBuilder vocabStr = new StringBuilder();
         dict = new int[sortedTermData.length][5];
         for (int i = 0; i < sortedTermData.length; i++) {
-
-          //  showFreeMemory();
-
             int[] termData = dict[i];
             TermData currTermData = sortedTermData[i];
             termData[0] = vocabStr.length();
@@ -138,26 +137,20 @@ public class IndexBody {
         }
         this.vocabStr = vocabStr.toString();
 
-        System.out.println("inverse");
-     //   showFreeMemory();
-
         vocabStr.setLength(0);
         CharSequence[] revTerms = new CharSequence[sortedTermData.length];
         char oldIndexSep = '%';
         for (int i = 0; i < sortedTermData.length; i++) {
-         //   showFreeMemory();
             StringBuilder reverser = new StringBuilder(sortedTermData[i].getTerm().length() + 1 + intDigits(i));
             reverser.append(sortedTermData[i].getTerm()).reverse().append(oldIndexSep).append(i);
             sortedTermData[i] = null;
             revTerms[i] = reverser;
         }
 
-        System.out.println("last phase");
         Quick3string.sort(revTerms);
         StringBuilder reVocabStr = new StringBuilder();
         revDict = new int[revTerms.length][2];
         for (int i = 0; i < revTerms.length; i++) {
-         //   showFreeMemory();
             revDict[i][0] = reVocabStr.length();
             int sepIndex = 0;
             while (revTerms[i].charAt(++sepIndex) != oldIndexSep) ;
@@ -218,47 +211,6 @@ public class IndexBody {
         if (cmpStrChars(term, vocabStr, start, end, true) != 0) return findTop ? mid + 1 : mid - 1;
         return mid;
     }
-
-    // top in sorted order
-//    private int findTopBound(String term, long termData, final int[][] dict, String vocabStr) {
-//        // get index of term and look a step higher
-//        int hi = (int) (termData >> 32);
-//        int lo = (int) (hi - (termData & 0x00000000ffffffffL));
-//
-//        assert hi != -1;
-//        int mid;
-//        do {
-//            mid = lo + (hi - lo) >> 1;
-//            int start = dict[mid][0];
-//            int end = dict[mid + 1][0];
-//            if (cmpStrChars(term, vocabStr, start, end, true) == 0) hi = mid - 1;
-//            else lo = mid + 1;
-//        } while (lo <= hi);
-//        if (cmpStrChars(term, vocabStr, dict[mid][0], dict[mid + 1][0], true) != 0) return mid + 1;
-//        return mid;
-//    }
-//
-//    private int findBottomBound(String term, long termData, final int[][] dict, String vocabStr) {
-//        int lo = (int) (termData >> 32);
-//        int hi = (int) (lo + (termData & 0x00000000ffffffffL));
-//        assert lo != -1;
-//        int mid;
-//        do {
-//            mid = lo + (hi - lo) >> 1;
-//            int start = dict[mid][0];
-//            int end = mid + 1 < dict.length ? dict[mid + 1][0] : vocabStr.length() - 1;
-//            if (cmpStrChars(term, vocabStr, start, end, true) == 0) lo = mid + 1;
-//            else hi = mid - 1;
-//        } while (lo <= hi);
-//        int start = dict[mid][0];
-//        int end = mid + 1 < dict.length ? dict[mid + 1][0] : vocabStr.length() - 1;
-//        if (cmpStrChars(term, vocabStr, start, end, true) != 0) return mid - 1;
-//        return mid;
-//    }
-
-//    private long startWith(String prefix, int[][] dict, String vocabStr) {
-//
-//    }
 
     /**
      * compare passed term and a segment of sequence in range [start;end)
@@ -321,5 +273,21 @@ public class IndexBody {
         }
     }
 
+    @Override
+    public Iterator<String> iterator() {
+        return new Iterator<String>() {
+            int nextTermIndex = 0;
+            @Override
+            public boolean hasNext() {
+                return nextTermIndex != dict.length;
+            }
 
+            @Override
+            public String next() {
+                return nextTermIndex < dict.length - 1
+                        ? vocabStr.substring(dict[nextTermIndex][0], dict[++nextTermIndex][0])
+                        : vocabStr.substring(dict[nextTermIndex++][0]);
+            }
+        };
+    }
 }
