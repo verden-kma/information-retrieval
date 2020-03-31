@@ -3,6 +3,7 @@ package ukma.ir.index;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import edu.stanford.nlp.process.Morphology;
+import ukma.ir.index.helpers.Clusterizer;
 import ukma.ir.index.helpers.DocVector;
 import ukma.ir.index.helpers.IndexBody;
 import ukma.ir.index.helpers.TermData;
@@ -17,6 +18,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.stream.Stream;
 
 import static java.lang.String.valueOf;
+//import static ukma.ir.index.helpers.Clusterizer.buildDocVectors;
+//import static ukma.ir.index.helpers.Clusterizer.buildClusters;
 import static ukma.ir.index.helpers.VLC.writeVLC;
 
 /*
@@ -53,7 +56,7 @@ public class IndexServer {
     private static IndexServer instance; // effectively final
     private static final Morphology MORPH = new Morphology();
     private DocVector[] docVectors;
-    private HashMap<Integer, DocVector[]> clusters;
+    private Map<Integer, DocVector[]> clusters;
 
     // building-time variables
     private int numStoredDictionaries;
@@ -124,9 +127,9 @@ public class IndexServer {
         return m.stem(token.toLowerCase().replaceAll("\\W", ""));
     }
 
-    private long startTime = System.currentTimeMillis();
+    private static long startTime = System.currentTimeMillis();
 
-    private long getTime() {
+    public static long getTime() {
         return (System.currentTimeMillis() - startTime) / 1000;
     }
 
@@ -151,10 +154,9 @@ public class IndexServer {
             transferMerge();
             System.out.println("build vectors");
             showFreeMemory();
-            docVectors = new DocVector[documents.length];
-            buildDocVectors();
             System.out.println("build clusters, time: " + getTime());
-            buildClusters();
+            docVectors = Clusterizer.buildDocVectors(documents.length, index);
+            clusters = Clusterizer.buildClusters(docVectors);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -165,65 +167,6 @@ public class IndexServer {
     private void showFreeMemory() {
         Runtime rt = Runtime.getRuntime();
         System.out.println("Free memory: " + (double) rt.freeMemory() / rt.maxMemory());
-    }
-
-    private void buildClusters() {
-        Map<Integer, Integer> leaders = chooseLeaders();
-        Follower[] followers = new Follower[docVectors.length - leaders.size()];
-        for (int i = 0; i < followers.length; i++) followers[i] = new Follower();
-
-        for (int leader : leaders.keySet()) {
-            for (int flr = 0; flr < docVectors.length; flr++) {
-                if (leaders.containsKey(flr)) continue;
-                double sim = docVectors[leader].cosineSimilarity(docVectors[flr]);
-                if (followers[flr - flr / leaders.size()].sim < sim) {
-                    leaders.put(followers[flr].leader, Math.max(leaders.get(followers[flr].leader) - 1, 0));
-                    followers[flr].leader = leader;
-                    leaders.put(followers[flr].leader, leaders.get(followers[flr].leader) + 1);
-                    followers[flr].sim = (float) sim;
-                }
-            }
-        }
-        System.out.println("stage 1");
-        clusters = new HashMap<>(leaders.size());
-        for (Map.Entry<Integer, Integer> leaderStat : leaders.entrySet()) {
-            clusters.put(leaderStat.getKey(), new DocVector[leaderStat.getValue()]);
-        }
-
-        System.out.println("stage 2");
-
-        int[] leaderIndices = new int[leaders.size()];
-        for (int i = 0; i < docVectors.length; i++) {
-            if (leaders.containsKey(i)) continue;
-            Follower flr = followers[i - i / leaders.size()];
-            clusters.get(flr.leader)[leaderIndices[flr.leader]++] = docVectors[i];
-        }
-        System.out.println("stage 3");
-
-    }
-
-    private Map<Integer, Integer> chooseLeaders() {
-        int step = (int) Math.sqrt(docVectors.length);
-        int nextLeader = 0;
-        HashMap<Integer, Integer> leaders = new HashMap<>();
-        for (int i = 0; i < step; i++)
-            leaders.put(nextLeader += step, 0);
-        return leaders;
-    }
-
-    private void buildDocVectors() {
-        for (int i = 0; i < docVectors.length; i++)
-            docVectors[i] = new DocVector(i);
-
-        Iterator<String> vocabulary = index.iterator();
-        for (int i = 0; vocabulary.hasNext(); i++) {
-            int[][] termData = index.getTermData(vocabulary.next());
-            int termFr = termData.length;
-            for (int[] termDatum : termData) {
-                int docID = termDatum[0];
-                docVectors[docID].addTermScore(i, termFr * Math.log((double) docVectors.length / (termData[0].length - 1)));
-            }
-        }
     }
 
     private class FileProcessor implements Runnable {
@@ -675,7 +618,20 @@ public class IndexServer {
 
 }
 
-class Follower {
-    int leader;
-    float sim;
-}
+//class Follower {
+//    int leader;
+//    float sim;
+//
+//    @Override
+//    public boolean equals(Object o) {
+//        if (this == o) return true;
+//        if (o == null || getClass() != o.getClass()) return false;
+//        Follower follower = (Follower) o;
+//        return leader == follower.leader;
+//    }
+//
+//    @Override
+//    public int hashCode() {
+//        return Objects.hash(leader);
+//    }
+//}

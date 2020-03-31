@@ -3,9 +3,7 @@ package ukma.ir.index.helpers;
 
 import javafx.scene.control.Alert;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.RandomAccessFile;
+import java.io.*;
 
 public class DocVector {
 
@@ -18,10 +16,12 @@ public class DocVector {
 
     private final static String PATH_TEMPLATE = ("data/doc_vectors/vec%d.bin");
     private final String filePath;
-    private int size;
+    private int entries;
     private RandomAccessFile bridge;
+    private double squareSum;
+    private boolean isBuilding = true;
 
-    public DocVector(int docID) {
+    DocVector(int docID) {
         filePath = String.format(PATH_TEMPLATE, docID);
         try {
             bridge = new RandomAccessFile(filePath, "rw");
@@ -30,107 +30,103 @@ public class DocVector {
         }
     }
 
-    public void addTermScore(int termNum, double tfIdf) {
+
+    void addTermScore(int termNum, double tfIdf) {
+        if (!isBuilding) throw new IllegalStateException("vector is already built");
         try {
             bridge.writeInt(termNum);
             bridge.writeFloat((float) tfIdf);
-            size++;
+            squareSum += Math.pow(tfIdf, 2);
+            entries++;
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    public double cosineSimilarity(DocVector v) {
-        if (v == null) throw new IllegalArgumentException("parameter is null");
-        if (size == 0 || v.size == 0) return 0;
-        try {
-
-
-            final long currFilePos = bridge.getFilePointer();
-            final long vCurrFilePos = v.bridge.getFilePointer();
-
-            long fileLength = new File(filePath).length();
-            long vFileLength = new File(v.filePath).length();
-            double score = 0;
-            int leap = (int) Math.sqrt(size);
-            int vLeap = (int) Math.sqrt(v.size);
-            bridge.seek(0);
-            v.bridge.seek(0);
-
-            int index = bridge.readInt();
-            float tfIdf = bridge.readFloat();
-            double denum = 0;
-            int vIndex = v.bridge.readInt();
-            float vTfIdf = v.bridge.readFloat();
-            double vDenum = 0;
-
-            int i = 0, j = 0;
-            while (i < size && j < v.size) {
-                if (index == vIndex) {
-                    score += tfIdf * vTfIdf;
-                    denum += Math.pow(tfIdf, 2);
-                    vDenum += Math.pow(vTfIdf, 2);
-
-                    index = bridge.readInt();
-                    vIndex = v.bridge.readInt();
-                    tfIdf = bridge.readFloat();
-                    vTfIdf = bridge.readFloat();
-                    i++;
-                    j++;
-                } else if (index > vIndex) {
-                    long oldPos = v.bridge.getFilePointer();
-                    long tryPos = oldPos + vLeap * (Integer.BYTES + Float.BYTES);
-                    v.bridge.seek(tryPos);
-                    int vTryIndex = v.bridge.readInt();
-                    if (tryPos < vFileLength && index >= vTryIndex) {// if possible to skip then skip while possible
-                        do {
-                            vIndex = vTryIndex;
-                            oldPos = v.bridge.getFilePointer();
-                            assert (oldPos == tryPos);
-                            tryPos = oldPos + vLeap * (Integer.BYTES + Float.BYTES);
-                        } while (tryPos < vFileLength && index >= (vTryIndex = v.bridge.readInt()));
-
-                        // last skip cased filePointer to be 1 skip ahead from last correct
-                        v.bridge.seek(oldPos); // reset to last correct filePointer
-                    } else {
-                        v.bridge.seek(oldPos + Float.BYTES); // skip to next term
-                    }
-                } else { // if (index < vIndex)
-                    long oldPos = bridge.getFilePointer();
-                    long tryPos = oldPos + leap * (Integer.BYTES + Float.BYTES);
-                    bridge.seek(tryPos);
-                    int tryIndex = bridge.readInt();
-                    if (tryPos < fileLength && tryIndex <= vIndex) {
-                        // if possible to skip then skip while possible
-                        do {
-                            index = tryIndex;
-                            oldPos = bridge.getFilePointer();
-                            assert (oldPos == tryPos);
-                            tryPos = oldPos + leap * (Integer.BYTES + Float.BYTES);
-                        } while (tryPos < fileLength && (tryIndex = bridge.readInt()) <= vIndex);
-
-                        // last skip cased filePointer to be 1 skip ahead from last correct
-                        bridge.seek(oldPos); // reset to last correct filePointer
-                    } else {
-                        bridge.seek(oldPos + Float.BYTES); // skip to next term
-                    }
-                }
-            }
-
-            bridge.seek(currFilePos);
-            v.bridge.seek(vCurrFilePos);
-            return score / (Math.sqrt(denum) * Math.sqrt(vDenum));
-        } catch (IOException e) {
-            throw new RuntimeException("internal logic error, IOError", e);
-        }
-    }
-
-    @Override
-    public void finalize() {
+    void finishBuild() {
+        isBuilding = false;
         try {
             bridge.close();
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
+
+    double cosineSimilarity(DocVector v) {
+        if (isBuilding) throw new IllegalStateException("vector is still being built");
+        if (v == null) throw new IllegalArgumentException("parameter is null");
+        if (entries == 0 || v.entries == 0) return 0;
+        try (DataInputStream dis = new DataInputStream(new BufferedInputStream(new FileInputStream(filePath)));
+             DataInputStream vDis = new DataInputStream(new BufferedInputStream(new FileInputStream(v.filePath)))) {
+            double score = 0;
+
+            int index = dis.readInt();
+            int vIndex = vDis.readInt();
+
+            int i = 1, j = 1;
+            while (i < entries && j < v.entries) {
+                if (index == vIndex) {
+                    score += dis.readFloat() * vDis.readFloat();
+
+                    index = dis.readInt();
+                    vIndex = vDis.readInt();
+
+                    i++;
+                    j++;
+                } else if (index > vIndex) {
+                    vDis.skipBytes(Float.BYTES);
+                    vIndex = vDis.readInt();
+                    j++;
+                } else { // if (index < vIndex)
+                    dis.skipBytes(Float.BYTES);
+                    index = dis.readInt();
+                    i++;
+                }
+            }
+            return score / (Math.sqrt(squareSum) * Math.sqrt(v.squareSum));
+        } catch (IOException e) {
+            throw new RuntimeException("internal logic error, IOError", e);
+        }
+    }
+
+//    /**
+//     * java, where is <code>ref</code>?
+//     * @param bridge RandomAccessFile with lower file position (inState -> Float -> ... -> Float -> outState
+//     * @param fileLength length of file that <code>bridge</code> is associated with
+//     * @param loInd index of file for lower processed vector
+//     * @param hiInd index of file for higher processed vector
+//     * @param leap number of entries to leap over
+//     * @return skipData which is 2 integers:<br> 1st - number of leaped entries<br>2nd-advanced <code>loInd</code>
+//     * @throws IOException
+//     */
+//    private long trySkip(RandomAccessFile bridge, long fileLength, int loInd, int hiInd, int leap) throws IOException {
+//        long oldPos = bridge.getFilePointer();
+//        long tryPos = oldPos + Float.BYTES + leap * (Integer.BYTES + Float.BYTES); // go to int position and jump
+//        int leaped = 0;
+//
+//        if (tryPos < fileLength) {
+//            bridge.seek(tryPos);
+//            int tryIndex = bridge.readInt();
+//            // at this stage only int index is read, file pointer is before float tfIdf
+//            if (tryIndex <= hiInd) { // if possible to skip then skip while possible
+//                do {
+//                    loInd = tryIndex;
+//                    oldPos = bridge.getFilePointer(); // = tryPos
+//                    leaped += leap;
+//                    tryPos = oldPos + leap * (Integer.BYTES + Float.BYTES);
+//                    if (tryPos >= fileLength) break;
+//                    bridge.seek(tryPos);
+//                    bridge.skipBytes(Float.BYTES);
+//                    tryIndex = bridge.readInt();
+//                } while (hiInd >= tryIndex);
+//
+//            }
+//            // last skip caused filePointer to be 1 skip ahead from last correct
+//            bridge.seek(oldPos); // reset to last correct filePointer
+//        }
+//        long res = leaped;
+//        res <<= 32;
+//        res |= loInd;
+//        return res;
+//    }
 }
