@@ -18,8 +18,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.stream.Stream;
 
 import static java.lang.String.valueOf;
-//import static ukma.ir.index.helpers.Clusterizer.buildDocVectors;
-//import static ukma.ir.index.helpers.Clusterizer.buildClusters;
 import static ukma.ir.index.helpers.VLC.writeVLC;
 
 /*
@@ -37,8 +35,7 @@ public class IndexServer {
         dirs.mkdirs();
     }
 
-    private static final int WORKERS = 3;
-    private Path LIBRARY = Paths.get("G:\\project\\library\\custom");
+    private static final int WORKERS = Runtime.getRuntime().availableProcessors();
     private static final String TEMP_PARTICLES = "data/dictionary/dp%d.txt";
     private static final String INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
     private static final long WORKERS_MEMORY_LIMIT = Math.round(Runtime.getRuntime().maxMemory() * 0.5);
@@ -47,6 +44,7 @@ public class IndexServer {
     private static final char DOC_COORD_SEP = '>'; // DOC_COORDINATE
     private static final char COORD_SEP = ' ';
     private static final char TF_SEP = '#'; // TERM_FREQUENCY
+    private Path LIBRARY = Paths.get("G:\\project\\library\\custom");
 //    private static final String TERM_PATHS = "data/cache/term.bin";
 //    private static final String DOC_ID_PATH = "data/cache/docId.bin";
 
@@ -150,18 +148,21 @@ public class IndexServer {
                 new Thread(new FileProcessor(Arrays.copyOfRange(documents, from, to))).start();
             }
             completion.await();
+            long avLength = (documents[0].length() + documents[documents.length-1].length() + documents[documents.length/2].length())/3;
+            long avWordsNum = avLength / 5;
+            long wordsPerFleck = (long)(avWordsNum * Math.sqrt(documents.length));
             System.out.println("start transferMerge: " + getTime());
-            transferMerge();
-            System.out.println("build vectors");
+            transferMerge(wordsPerFleck > 0 ? wordsPerFleck : Long.MAX_VALUE);
             showFreeMemory();
-            System.out.println("build clusters, time: " + getTime());
+            System.out.println("build vectors");
             docVectors = Clusterizer.buildDocVectors(documents.length, index);
+            System.out.println("build clusters, time: " + getTime());
             clusters = Clusterizer.buildClusters(docVectors);
         } catch (Exception e) {
             e.printStackTrace();
         }
         long endTime = System.nanoTime();
-        System.out.println("time: " + (endTime - startTime) / 1e9);
+        System.out.println("Total time: " + (endTime - startTime) / 1e9);
     }
 
     public DocVector buildQueryVector(String[] query) {
@@ -317,14 +318,13 @@ public class IndexServer {
     }
 
     // suspect bugs on writing vlc after docFr 35th byte -> int vlc vlc [ok] -> int [wrong] ...
-    private void transferMerge() throws IOException {
+    private void transferMerge(long numTermsPerFleck) throws IOException {
         saveParticles();
         dictionary = null;
 
         List<TermData> termData = new ArrayList<>();
         int tupleIndex = 0;
         int numFlecks = 0;
-        int numTermsPerFleck = 10000;
         String path = String.format(INDEX_FLECKS, numFlecks);
         BufferedOutputStream fleck = new BufferedOutputStream(new FileOutputStream(new File(path)));
         long writtenBytes = 0; //for in-fleck position
@@ -603,10 +603,20 @@ public class IndexServer {
         }
 
         boolean hasNextTerm() {
+            byte hasNext = checkNextTerm();
+            while (hasNext == 0) hasNext = checkNextTerm();
+            return hasNext == 1;
+        }
+
+        /**
+         * checks next token for presence and validness
+         * @return -1 if next term is absent<br>1 if present<br>0 if next term is not valid
+         */
+        private byte checkNextTerm() {
             if (lineTokens == null || nextTokenIndex == lineTokens.length) {
                 try {
                     String nextLine = br.readLine();
-                    if (nextLine == null) return false;
+                    if (nextLine == null) return -1;
                     lineTokens = nextLine.split("\\s+");
                     for (int i = 0; i < lineTokens.length; i++)
                         lineTokens[i] = normalize(lineTokens[i], morph);
@@ -620,10 +630,10 @@ public class IndexServer {
                 if (lineTokens[nextTokenIndex] != null
                         && (lineTokens[nextTokenIndex].length() < 12 // let any char sequences < 12 be in index to facilitate search by codes/numbers
                         || !lineTokens[nextTokenIndex].matches("(\\w*\\d)+\\w*")))
-                    return true; // not let too long codes that are likely to be useless, but allow long words
+                    return 1; // not let too long codes (may be hex) that are likely to be useless, but allow long words
                 nextTokenIndex++;
             }
-            return hasNextTerm();
+            return 0;
         }
 
         @Override

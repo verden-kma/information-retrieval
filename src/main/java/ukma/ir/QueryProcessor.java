@@ -77,7 +77,7 @@ public class QueryProcessor {
         return result;
     }
 
-    public List<String> processPositionalQuery(String query) throws IOException {
+    public List<String> processPositionalQuery(String query) {
         if (!query.matches("\\w+(\\s+/\\d+\\s+\\w+)*")) throw new IllegalArgumentException("Wrong input format");
         String[] tokens = query.trim().split("\\s+");
         String[] terms = new String[tokens.length / 2 + 1];
