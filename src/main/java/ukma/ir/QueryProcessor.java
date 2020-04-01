@@ -1,11 +1,13 @@
 package ukma.ir;
 
 import ukma.ir.index.IndexServer;
+import ukma.ir.index.helpers.DocVector;
 
 import java.io.*;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class QueryProcessor {
 
@@ -204,6 +206,22 @@ public class QueryProcessor {
         return result;
     }
 
+    public List<String> processClusterQuery(String q) {
+        if (!q.matches("[\\w\\s]+")) throw new IllegalArgumentException("wrong query pattern");
+        String[] query = Stream.of(q.split("\\s+"))
+                .map(IndexServer::normalize)
+                .filter(Objects::nonNull)
+                .toArray(String[]::new);
+        if (query.length == 0) throw new IllegalArgumentException("invalid words");
+
+        DocVector queryVector = indexService.buildQueryVector(query);
+        List<Integer> docIDs = indexService.getCluster(queryVector);
+        if (docIDs == null) return new ArrayList<>(0);
+        List<String> result = new ArrayList<>(docIDs.size());
+        for (Integer docID : docIDs)
+            result.add(indexService.getDocName(docID));
+        return result;
+    }
 
     private List<Integer> intersect(Integer[] basePost, Integer[] post) {
         List<Integer> res = new ArrayList<>();

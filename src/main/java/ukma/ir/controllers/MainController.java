@@ -20,7 +20,7 @@ public class MainController {
     private ChoiceBox<IndexServer.IndexType> searchMode;
 
     public void initVisual() {
-        searchMode.getItems().addAll(IndexServer.IndexType.TERM, IndexServer.IndexType.COORDINATE, IndexServer.IndexType.JOKER);
+        searchMode.getItems().addAll(IndexServer.IndexType.values());
         searchMode.setValue(IndexServer.IndexType.TERM);
     }
 
@@ -45,6 +45,8 @@ public class MainController {
                 case JOKER:
                     queryResponse.setAll(qp.processJokerQuery(query));
                     break;
+                case CLUSTER:
+                    queryResponse.setAll(qp.processClusterQuery(query));
             }
             entry.showResult();
         } catch (IllegalArgumentException e) {

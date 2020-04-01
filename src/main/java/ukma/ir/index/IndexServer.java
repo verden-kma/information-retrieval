@@ -82,7 +82,7 @@ public class IndexServer {
 
     // for GUI
     public enum IndexType {
-        TERM, COORDINATE, JOKER
+        TERM, COORDINATE, JOKER, CLUSTER
     }
 
 
@@ -162,6 +162,45 @@ public class IndexServer {
         }
         long endTime = System.nanoTime();
         System.out.println("time: " + (endTime - startTime) / 1e9);
+    }
+
+    public DocVector buildQueryVector(String[] query) {
+        // use map of term - quantity (tf for query)
+        Map<Integer, Double> queryData = new HashMap<>(query.length);
+        for (int i = 0; i < query.length; i++) {
+            String term = query[i];
+            int[][] termData = index.getTermData(term);
+            if (termData == null) continue; // if not from vocabulary then skip
+            queryData.put(index.getTermDictPos(term), Math.log((double) docVectors.length / (termData[0].length - 1)));
+        }
+        return new DocVector(queryData);
+    }
+
+    public List<Integer> getCluster(DocVector inDoc) {
+        int closestLeader = -1;
+        double sim = 0;
+        for (Integer nextLeader : clusters.keySet()) {
+            double nextSim = docVectors[nextLeader].cosineSimilarity(inDoc);
+            if (nextSim > sim) {
+                closestLeader = nextLeader;
+                sim = nextSim;
+            }
+        }
+
+        if (closestLeader == -1) return null;
+        TreeMap<Double, Integer> sortedCluster = new TreeMap<>();
+        sortedCluster.put(sim, closestLeader);
+        DocVector[] followers = clusters.get(closestLeader);
+        if (followers != null)
+            for (DocVector vec : followers) {
+                double flrSim = vec.cosineSimilarity(inDoc);
+                sortedCluster.put(flrSim, vec.getOrdinal());
+            }
+        List<Integer> result = new ArrayList<>(sortedCluster.size());
+        for (Map.Entry<Double, Integer> entry : sortedCluster.entrySet())
+            result.add(entry.getValue());
+
+        return result;
     }
 
     private void showFreeMemory() {

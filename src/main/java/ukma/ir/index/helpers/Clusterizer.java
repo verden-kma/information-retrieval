@@ -1,7 +1,5 @@
 package ukma.ir.index.helpers;
 
-import ukma.ir.index.IndexServer;
-
 import java.util.*;
 
 public class Clusterizer {
@@ -32,7 +30,7 @@ public class Clusterizer {
             }
         }
 
-        Map<Integer, DocVector[]> clusters = new HashMap<>(leaderFollowers.size());//321
+        Map<Integer, DocVector[]> clusters = new HashMap<>(leaderFollowers.size());
         for (Map.Entry<Integer, Integer> leaderStat : leaderFollowers.entrySet()) {
             clusters.put(leaderStat.getKey(), new DocVector[leaderStat.getValue()]);
         }
@@ -50,9 +48,9 @@ public class Clusterizer {
                 individuals.add(vec);
                 continue;
             }
-                int index = leaderIndices.get(flr.leader);
-                leaderIndices.put(flr.leader, index + 1);
-                clusters.get(flr.leader)[index] = docVectors[vec];
+            int index = leaderIndices.get(flr.leader);
+            leaderIndices.put(flr.leader, index + 1);
+            clusters.get(flr.leader)[index] = docVectors[vec];
         }
         for (Integer individual : individuals)
             clusters.put(individual, null);
@@ -73,6 +71,7 @@ public class Clusterizer {
 
         Iterator<String> vocabulary = index.iterator();
         for (int i = 0; vocabulary.hasNext(); i++) {
+
             int[][] termData = index.getTermData(vocabulary.next());
             int termFr = termData.length;
             for (int[] termDatum : termData) {

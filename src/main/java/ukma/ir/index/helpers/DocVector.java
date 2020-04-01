@@ -4,6 +4,7 @@ package ukma.ir.index.helpers;
 import javafx.scene.control.Alert;
 
 import java.io.*;
+import java.util.Map;
 
 public class DocVector {
 
@@ -15,13 +16,15 @@ public class DocVector {
     }
 
     private final static String PATH_TEMPLATE = ("data/doc_vectors/vec%d.bin");
+    private final int ordinal;
     private final String filePath;
     private int entries;
     private RandomAccessFile bridge;
     private double squareSum;
     private boolean isBuilding = true;
 
-    DocVector(int docID) {
+    public DocVector(int docID) {
+        ordinal = docID;
         filePath = String.format(PATH_TEMPLATE, docID);
         try {
             bridge = new RandomAccessFile(filePath, "rw");
@@ -30,6 +33,13 @@ public class DocVector {
         }
     }
 
+    // TODO: refactor code so that query vectors are not the sane objects as doc vectors
+    public DocVector(Map<Integer, Double> query) {
+        this(-1);
+        for (Map.Entry<Integer, Double> termData : query.entrySet())
+            addTermScore(termData.getKey(), termData.getValue());
+        finishBuild();
+    }
 
     void addTermScore(int termNum, double tfIdf) {
         if (!isBuilding) throw new IllegalStateException("vector is already built");
@@ -52,7 +62,7 @@ public class DocVector {
         }
     }
 
-    double cosineSimilarity(DocVector v) {
+    public double cosineSimilarity(DocVector v) {
         if (isBuilding) throw new IllegalStateException("vector is still being built");
         if (v == null) throw new IllegalArgumentException("parameter is null");
         if (entries == 0 || v.entries == 0) return 0;
@@ -62,6 +72,9 @@ public class DocVector {
 
             int index = dis.readInt();
             int vIndex = vDis.readInt();
+
+            if (entries == 1 || v.entries == 1)
+                return index * vIndex / (Math.sqrt(squareSum) * Math.sqrt(v.squareSum));
 
             int i = 1, j = 1;
             while (i < entries && j < v.entries) {
@@ -89,44 +102,7 @@ public class DocVector {
         }
     }
 
-//    /**
-//     * java, where is <code>ref</code>?
-//     * @param bridge RandomAccessFile with lower file position (inState -> Float -> ... -> Float -> outState
-//     * @param fileLength length of file that <code>bridge</code> is associated with
-//     * @param loInd index of file for lower processed vector
-//     * @param hiInd index of file for higher processed vector
-//     * @param leap number of entries to leap over
-//     * @return skipData which is 2 integers:<br> 1st - number of leaped entries<br>2nd-advanced <code>loInd</code>
-//     * @throws IOException
-//     */
-//    private long trySkip(RandomAccessFile bridge, long fileLength, int loInd, int hiInd, int leap) throws IOException {
-//        long oldPos = bridge.getFilePointer();
-//        long tryPos = oldPos + Float.BYTES + leap * (Integer.BYTES + Float.BYTES); // go to int position and jump
-//        int leaped = 0;
-//
-//        if (tryPos < fileLength) {
-//            bridge.seek(tryPos);
-//            int tryIndex = bridge.readInt();
-//            // at this stage only int index is read, file pointer is before float tfIdf
-//            if (tryIndex <= hiInd) { // if possible to skip then skip while possible
-//                do {
-//                    loInd = tryIndex;
-//                    oldPos = bridge.getFilePointer(); // = tryPos
-//                    leaped += leap;
-//                    tryPos = oldPos + leap * (Integer.BYTES + Float.BYTES);
-//                    if (tryPos >= fileLength) break;
-//                    bridge.seek(tryPos);
-//                    bridge.skipBytes(Float.BYTES);
-//                    tryIndex = bridge.readInt();
-//                } while (hiInd >= tryIndex);
-//
-//            }
-//            // last skip caused filePointer to be 1 skip ahead from last correct
-//            bridge.seek(oldPos); // reset to last correct filePointer
-//        }
-//        long res = leaped;
-//        res <<= 32;
-//        res |= loInd;
-//        return res;
-//    }
+    public int getOrdinal() {
+        return ordinal;
+    }
 }

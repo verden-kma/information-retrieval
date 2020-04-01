@@ -75,6 +75,10 @@ public class IndexBody implements Iterable<String> {
         return res;
     }
 
+    public int getTermDictPos(String term) {
+        return (int) (findTerm(term, dict, vocabStr, false) >> 32);
+    }
+
     //TODO: optimization
     // 1) do not store docFr in memory
     // 2) use buffer https://stackoverflow.com/questions/5614206/buffered-randomaccessfile-java
@@ -116,11 +120,6 @@ public class IndexBody implements Iterable<String> {
             throw new NoSuchElementException("cannot find file specified");
         }
     }
-
-//    private void showFreeMemory() {
-//        Runtime rt = Runtime.getRuntime();
-//        System.out.println("Free memory: " + (double)rt.freeMemory()/rt.maxMemory());
-//    }
 
     private void buildDictionary(TermData[] sortedTermData) {
         StringBuilder vocabStr = new StringBuilder();
@@ -277,6 +276,7 @@ public class IndexBody implements Iterable<String> {
     public Iterator<String> iterator() {
         return new Iterator<String>() {
             int nextTermIndex = 0;
+
             @Override
             public boolean hasNext() {
                 return nextTermIndex != dict.length;
