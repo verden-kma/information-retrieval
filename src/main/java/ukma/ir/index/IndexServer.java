@@ -26,7 +26,7 @@ TODO: [docFr] [(docID TermFr)_0 ... (docID TermFr)_n-1] [(coord_0 ... coord_i-1)
           n               i                    j
 */
 
-public class IndexServer {
+public class IndexServer implements Serializable {
 
     static {
         // no time for AppData path
@@ -35,16 +35,16 @@ public class IndexServer {
         dirs.mkdirs();
     }
 
-    private static final int WORKERS = Runtime.getRuntime().availableProcessors();
-    private static final String TEMP_PARTICLES = "data/dictionary/dp%d.txt";
-    private static final String INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
-    private static final long WORKERS_MEMORY_LIMIT = Math.round(Runtime.getRuntime().maxMemory() * 0.5);
-    private static final long MAX_MEMORY_LOAD = Math.round(Runtime.getRuntime().maxMemory() * 0.7);
-    private static final char NEXT_DOC_SEP = ':'; // TERM_DOC
-    private static final char DOC_COORD_SEP = '>'; // DOC_COORDINATE
-    private static final char COORD_SEP = ' ';
-    private static final char TF_SEP = '#'; // TERM_FREQUENCY
-    private Path LIBRARY = Paths.get("G:\\project\\library\\custom");
+    private static transient final int WORKERS = Runtime.getRuntime().availableProcessors();
+    private static transient final String TEMP_PARTICLES = "data/dictionary/dp%d.txt";
+    private static transient final String INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
+    private static transient final long WORKERS_MEMORY_LIMIT = Math.round(Runtime.getRuntime().maxMemory() * 0.5);
+    private static transient final long MAX_MEMORY_LOAD = Math.round(Runtime.getRuntime().maxMemory() * 0.7);
+    private static transient final char NEXT_DOC_SEP = ':'; // TERM_DOC
+    private static transient final char DOC_COORD_SEP = '>'; // DOC_COORDINATE
+    private static transient final char COORD_SEP = ' ';
+    private static transient final char TF_SEP = '#'; // TERM_FREQUENCY
+    private transient Path LIBRARY = Paths.get("G:\\project\\library\\custom");
 //    private static final String TERM_PATHS = "data/cache/term.bin";
 //    private static final String DOC_ID_PATH = "data/cache/docId.bin";
 
@@ -52,17 +52,23 @@ public class IndexServer {
     // term - id of the corresponding index file
     private IndexBody index;
     private static IndexServer instance; // effectively final
-    private static final Morphology MORPH = new Morphology();
+    private static transient final Morphology MORPH = new Morphology();
     private DocVector[] docVectors;
     private Map<Integer, DocVector[]> clusters;
 
     // building-time variables
-    private int numStoredDictionaries;
-    private final CountDownLatch completion = new CountDownLatch(WORKERS);
+    private transient int numStoredDictionaries;
+    private transient final CountDownLatch completion = new CountDownLatch(WORKERS);
     // hash function is effective for Integer
     // <term, Hash<docID, positions>> size of map == df, size of positions == tf
-    private TreeMap<String, HashMap<Integer, ArrayList<Integer>>> dictionary;
-    private static final Object locker = new Object();
+    private transient TreeMap<String, HashMap<Integer, ArrayList<Integer>>> dictionary;
+    private static transient final Object locker = new Object();
+    private static transient long startTime = System.currentTimeMillis();
+
+    public static long getTime() {
+        return (System.currentTimeMillis() - startTime) / 1000;
+    }
+
 
     private IndexServer() {
         docId = HashBiMap.create();
@@ -82,7 +88,6 @@ public class IndexServer {
     public enum IndexType {
         TERM, COORDINATE, JOKER, CLUSTER
     }
-
 
     public boolean containsElement(String term) {
         return index.containsElement(term);
@@ -125,12 +130,6 @@ public class IndexServer {
         return m.stem(token.toLowerCase().replaceAll("\\W", ""));
     }
 
-    private static long startTime = System.currentTimeMillis();
-
-    public static long getTime() {
-        return (System.currentTimeMillis() - startTime) / 1000;
-    }
-
     public void buildInvertedIndex() {
         System.out.println("start building");
         long startTime = System.nanoTime();
@@ -148,13 +147,12 @@ public class IndexServer {
                 new Thread(new FileProcessor(Arrays.copyOfRange(documents, from, to))).start();
             }
             completion.await();
-            long avLength = (documents[0].length() + documents[documents.length-1].length() + documents[documents.length/2].length())/3;
+            long avLength = (documents[0].length() + documents[documents.length - 1].length() + documents[documents.length / 2].length()) / 3;
             long avWordsNum = avLength / 5;
-            long wordsPerFleck = (long)(avWordsNum * Math.sqrt(documents.length));
             System.out.println("start transferMerge: " + getTime());
-            transferMerge(wordsPerFleck > 0 ? wordsPerFleck : Long.MAX_VALUE);
+            transferMerge(avWordsNum);
             showFreeMemory();
-            System.out.println("build vectors");
+            System.out.println("build vectors: " + getTime());
             docVectors = Clusterizer.buildDocVectors(documents.length, index);
             System.out.println("build clusters, time: " + getTime());
             clusters = Clusterizer.buildClusters(docVectors);
@@ -322,14 +320,14 @@ public class IndexServer {
         saveParticles();
         dictionary = null;
 
+        System.out.println("Start transfer Merge");
+
         List<TermData> termData = new ArrayList<>();
         int tupleIndex = 0;
         int numFlecks = 0;
         String path = String.format(INDEX_FLECKS, numFlecks);
         BufferedOutputStream fleck = new BufferedOutputStream(new FileOutputStream(new File(path)));
         long writtenBytes = 0; //for in-fleck position
-
-        System.out.println("Start transfer Merge");
 
         PriorityQueue<PTP> termsPQ = initPTP();
         for (int i = 0; !termsPQ.isEmpty(); i++) {
@@ -437,8 +435,8 @@ public class IndexServer {
                 }
             }
         }
-        TermData[] sortedTermData = termData.toArray(new TermData[0]);
-        index = new IndexBody(sortedTermData, INDEX_FLECKS);
+        TermData[] unsortedTermData = termData.toArray(new TermData[0]);
+        index = new IndexBody(unsortedTermData, INDEX_FLECKS);
     }
 
     private PriorityQueue<PTP> initPTP() throws IOException {
@@ -610,6 +608,7 @@ public class IndexServer {
 
         /**
          * checks next token for presence and validness
+         *
          * @return -1 if next term is absent<br>1 if present<br>0 if next term is not valid
          */
         private byte checkNextTerm() {
@@ -666,21 +665,3 @@ public class IndexServer {
     }
 
 }
-
-//class Follower {
-//    int leader;
-//    float sim;
-//
-//    @Override
-//    public boolean equals(Object o) {
-//        if (this == o) return true;
-//        if (o == null || getClass() != o.getClass()) return false;
-//        Follower follower = (Follower) o;
-//        return leader == follower.leader;
-//    }
-//
-//    @Override
-//    public int hashCode() {
-//        return Objects.hash(leader);
-//    }
-//}

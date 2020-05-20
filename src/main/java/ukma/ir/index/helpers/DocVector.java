@@ -33,7 +33,7 @@ public class DocVector {
         }
     }
 
-    // TODO: refactor code so that query vectors are not the sane objects as doc vectors
+    // TODO: refactor code so that query vectors are not the same objects as doc vectors
     public DocVector(Map<Integer, Double> query) {
         this(-1);
         for (Map.Entry<Integer, Double> termData : query.entrySet())

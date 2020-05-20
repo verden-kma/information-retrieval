@@ -3,7 +3,6 @@ package ukma.ir;
 import ukma.ir.index.IndexServer;
 import ukma.ir.index.helpers.DocVector;
 
-import java.io.*;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -22,20 +21,20 @@ public class QueryProcessor {
     }
 
     /**
-     * @param q - query to be processed
+     * @param q - trimmed query to be processed
      * @return list of documents that match a given query
      */
     public List<String> processBooleanQuery(String q) {
-        if (!q.matches("\\w[\\w\\s]*")) throw new IllegalArgumentException("incorrect input");
+        if (!q.matches("\\s*\\w[\\w\\s]*")) throw new IllegalArgumentException("incorrect input");
         Set<Integer> reminders = new HashSet<>();
-        Arrays.stream(q.split(" OR "))
-                .map(union -> union.split(" AND "))
+        Arrays.stream(q.split("\\s*OR\\s*"))
+                .map(union -> union.split("\\s*AND\\s*"))
                 .forEach(unionParticle -> {
                     List<String> includeTerms = new ArrayList<>();
                     List<String> excludeTerms = new ArrayList<>();
                     for (String token : unionParticle)
-                        if (token.startsWith("NOT "))
-                            excludeTerms.add(IndexServer.normalize(token.substring(4)));
+                        if (token.startsWith("NOT")) // normalizer might return null
+                            excludeTerms.add(IndexServer.normalize(token.substring(token.lastIndexOf(' ') + 1)));
                         else includeTerms.add(IndexServer.normalize(token));
 
                     // if there are terms to include and one of these terms is in dictionary (in this case - 0th),
@@ -43,8 +42,9 @@ public class QueryProcessor {
                     // then set posting for this term as a base for further intersections
                     // else do no intersection as the result is empty if any entry is empty
                     Set<Integer> inDocs;
-                    if (!includeTerms.isEmpty() && indexService.containsElement(includeTerms.get(0))) {
-                        int[] postings = indexService.getPostings(includeTerms.get(0));
+                    int startIndex = firstNotNull(includeTerms);
+                    if (startIndex != -1) {
+                        int[] postings = indexService.getPostings(includeTerms.get(startIndex));
                         inDocs = new HashSet<>(postings.length, 1); // do not expand
                         addAllDecoded(inDocs, postings);
 
@@ -61,7 +61,7 @@ public class QueryProcessor {
 
                     Set<Integer> exDocs = new HashSet<>();
                     for (String term : excludeTerms) {
-                        if (term == null) continue; // normalizer might return null
+                        if (term == null) continue;
                         int[] posting = indexService.getPostings(term);
                         if (posting != null)
                             addAllDecoded(exDocs, posting);
@@ -77,9 +77,19 @@ public class QueryProcessor {
         return result;
     }
 
+    private static <E> int firstNotNull(List<E> list) {
+        // not index access because of possible LinkedList
+        int index = 0;
+        for (E item : list)
+            if (item != null) return index;
+            else index++;
+        return -1;
+    }
+
     public List<String> processPositionalQuery(String query) {
-        if (!query.matches("\\w+(\\s+/\\d+\\s+\\w+)*")) throw new IllegalArgumentException("Wrong input format");
-        String[] tokens = query.trim().split("\\s+");
+        if (!query.matches("\\w+(\\s+/\\d+\\s+\\w+)*"))
+            throw new IllegalArgumentException("Wrong input format");
+        String[] tokens = query.split("\\s+");
         String[] terms = new String[tokens.length / 2 + 1];
         int[] distance = new int[tokens.length / 2];
 
@@ -146,13 +156,15 @@ public class QueryProcessor {
         return answer;
     }
 
-    // a*b*c && *abc && abc*
-    // NOT *abc* || ab**c
-    // TODO: use simple boolean retrieval to facilitate mixed search
+    // a*b*c && *abc && abc* && *ab*c && a*bc*
+    // NOT *abc* / ab**c
     public Collection<String> processJokerQuery(String query) {
+        String jokerWordPattern = "(\\*?\\w+(\\*\\w+)?)|(\\w+\\*?\\w*(\\w\\*\\w*)?)";
+        String queryPattern = jokerWordPattern + "(\\s+(" + jokerWordPattern + "))*";
+        if (!query.matches(queryPattern)) return new ArrayList<>(0);
         String[] tokens = query.split("\\s+");
         for (String token : tokens)
-            if (!token.matches("(\\*\\w+(\\*\\w+)?)|(\\w+\\*\\w*(\\w\\*\\w*)?)"))
+            if (!token.matches(jokerWordPattern))
                 throw new IllegalArgumentException('"' + query + '"' + " is not a valid joker query");
 
         for (int i = 0; i < tokens.length; i++)
@@ -164,8 +176,17 @@ public class QueryProcessor {
             Set<String> matchPref = new TreeSet<>();
             Set<String> matchSuf = new TreeSet<>();
 
+            if (term.indexOf('*') == -1) {
+                String normTerm = IndexServer.normalize(term);
+                if (normTerm == null) continue;
+                int[] postings = indexService.getPostings(normTerm);
+                addAllDecoded(termContribution, postings);
+                validFiles.retainAll(termContribution);
+                continue;
+            }
+
             if (term.charAt(0) != '*') {
-                matchPref.addAll(Arrays.asList(indexService.startWith(term.substring(0, term.indexOf("*")))));
+                matchPref.addAll(Arrays.asList(indexService.startWith(term.substring(0, term.indexOf('*')))));
                 // no terms match given non-empty prefix
                 if (matchPref.isEmpty()) return new ArrayList<>(0);
             }
@@ -223,35 +244,35 @@ public class QueryProcessor {
         return result;
     }
 
-    private List<Integer> intersect(Integer[] basePost, Integer[] post) {
-        List<Integer> res = new ArrayList<>();
-        int baseLeap = (int) Math.sqrt(basePost.length);
-        int newLeap = (int) Math.sqrt(post.length);
-
-        int baseIndex = 0;
-        int anotherIndex = 0;
-        while (baseIndex < basePost.length && anotherIndex < post.length) {
-            if (basePost[baseIndex].equals(post[anotherIndex])) {
-                res.add(basePost[baseIndex++]);
-                anotherIndex++;
-            } else if (basePost[baseIndex].compareTo(post[anotherIndex]) > 0) {
-                int skippedIndex = anotherIndex + newLeap;
-                if (skippedIndex < post.length && basePost[baseIndex].compareTo(post[skippedIndex]) >= 0)
-                    do {
-                        anotherIndex = skippedIndex;
-                        skippedIndex += newLeap;
-                    } while (skippedIndex < post.length && basePost[baseIndex].compareTo(post[skippedIndex]) >= 0);
-                else anotherIndex++;
-            } else {
-                int skippedIndex = baseIndex + baseLeap;
-                if (skippedIndex < basePost.length && basePost[skippedIndex].compareTo(post[anotherIndex]) <= 0)
-                    do {
-                        baseIndex = skippedIndex;
-                        skippedIndex += baseLeap;
-                    } while (skippedIndex < basePost.length && basePost[skippedIndex].compareTo(post[anotherIndex]) <= 0);
-                else anotherIndex++;
-            }
-        }
-        return res;
-    }
+//    private List<Integer> intersect(Integer[] basePost, Integer[] post) {
+//        List<Integer> res = new ArrayList<>();
+//        int baseLeap = (int) Math.sqrt(basePost.length);
+//        int newLeap = (int) Math.sqrt(post.length);
+//
+//        int baseIndex = 0;
+//        int anotherIndex = 0;
+//        while (baseIndex < basePost.length && anotherIndex < post.length) {
+//            if (basePost[baseIndex].equals(post[anotherIndex])) {
+//                res.add(basePost[baseIndex++]);
+//                anotherIndex++;
+//            } else if (basePost[baseIndex].compareTo(post[anotherIndex]) > 0) {
+//                int skippedIndex = anotherIndex + newLeap;
+//                if (skippedIndex < post.length && basePost[baseIndex].compareTo(post[skippedIndex]) >= 0)
+//                    do {
+//                        anotherIndex = skippedIndex;
+//                        skippedIndex += newLeap;
+//                    } while (skippedIndex < post.length && basePost[baseIndex].compareTo(post[skippedIndex]) >= 0);
+//                else anotherIndex++;
+//            } else {
+//                int skippedIndex = baseIndex + baseLeap;
+//                if (skippedIndex < basePost.length && basePost[skippedIndex].compareTo(post[anotherIndex]) <= 0)
+//                    do {
+//                        baseIndex = skippedIndex;
+//                        skippedIndex += baseLeap;
+//                    } while (skippedIndex < basePost.length && basePost[skippedIndex].compareTo(post[anotherIndex]) <= 0);
+//                else anotherIndex++;
+//            }
+//        }
+//        return res;
+//    }
 }

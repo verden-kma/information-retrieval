@@ -71,7 +71,6 @@ public class IndexBody implements Iterable<String> {
         int[][] fullInfo = getTermData(term);
         int[] res = new int[fullInfo.length];
         for (int i = 0; i < res.length; i++) res[i] = fullInfo[i][0];
-        // for (int i = 0; i < res.length; res[i++] = fullInfo[i][0]); test
         return res;
     }
 
