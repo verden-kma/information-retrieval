@@ -68,12 +68,15 @@ public class IndexBody implements Iterable<String> {
      * @throws NoSuchElementException if index data has been corrupted
      */
     public int[] getPostings(String term) {
-        int[][] fullInfo = getTermData(term);
+        CoordVector[] fullInfo = getTermData(term);
         int[] res = new int[fullInfo.length];
-        for (int i = 0; i < res.length; i++) res[i] = fullInfo[i][0];
+        for (int i = 0; i < res.length; i++) res[i] = fullInfo[i].getDocID();
         return res;
     }
 
+    /**
+     * @return position of the term in straight dictionary
+     */
     public int getTermDictPos(String term) {
         return (int) (findTerm(term, dict, vocabStr, false) >> 32);
     }
@@ -86,12 +89,12 @@ public class IndexBody implements Iterable<String> {
      * find documents and positions at which term resides
      *
      * @param term in index to search
-     * @return 2-dim array, 1st dim - ordinal of a docID, 2nd dim - docId, coords;<br>
-     * document frequency = length of the 1st dim,<br> term fr. = (length of the 2nd dim) - 1
-     * or null if no such term found
+     * @return array of vectors with <em>encoded</em> docID and associated array of <em>encoded</em> coordinates
+     * of the <br> term entries into the document or null if no such term found <br>
+     * document frequency = length,<br> term fr. = length of the vector
      * @throws NoSuchElementException if index data has been corrupted
      */
-    public int[][] getTermData(String term) {
+    public CoordVector[] getTermData(String term) {
         long termData = findTerm(term, dict, vocabStr, false);
         if (termData == -1) return null;
         int[] infoRow = dict[(int) (termData >> 32)];
@@ -102,21 +105,21 @@ public class IndexBody implements Iterable<String> {
         assert inFleckPos < new File(path).length();
         try (RandomAccessFile raf = new RandomAccessFile(path, "r")) {
             raf.seek(inFleckPos);
-            int docFr = raf.readInt();
-            int[][] termStat = new int[docFr][];
-            assert (docFr == infoRow[4]);
-            for (int i = 0; i < docFr; i++) {
+            int docFreq = raf.readInt();
+            CoordVector[] termStat = new CoordVector[docFreq];
+            assert (docFreq == infoRow[4]);
+            for (int i = 0; i < docFreq; i++) {
                 int docID = readVLC(raf);
-                int termFr = readVLC(raf);
-                termStat[i] = new int[termFr + 1];
-                termStat[i][0] = docID;
-                for (int j = 1; j < termStat[i].length; j++) {
-                    termStat[i][j] = readVLC(raf);
+                int termFreq = readVLC(raf);
+                int[] coords = new int[termFreq];
+                for (int j = 0; j < coords.length; j++) {
+                    coords[j] = readVLC(raf);
                 }
+                termStat[i] = new CoordVector(docID, coords);
             }
             return termStat;
         } catch (IOException e) {
-            throw new NoSuchElementException("cannot find file specified");
+            throw new NoSuchElementException("cannot find the file specified");
         }
     }
 

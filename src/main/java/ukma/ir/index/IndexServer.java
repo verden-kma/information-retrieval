@@ -3,10 +3,7 @@ package ukma.ir.index;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import edu.stanford.nlp.process.Morphology;
-import ukma.ir.index.helpers.Clusterizer;
-import ukma.ir.index.helpers.DocVector;
-import ukma.ir.index.helpers.IndexBody;
-import ukma.ir.index.helpers.TermData;
+import ukma.ir.index.helpers.*;
 
 import javax.annotation.Nullable;
 import java.io.*;
@@ -93,7 +90,7 @@ public class IndexServer implements Serializable {
         return index.containsElement(term);
     }
 
-    public int[][] getTermData(String term) {
+    public CoordVector[] getTermData(String term) {
         return index.getTermData(term);
     }
 
@@ -168,9 +165,9 @@ public class IndexServer implements Serializable {
         Map<Integer, Double> queryData = new HashMap<>(query.length);
         for (int i = 0; i < query.length; i++) {
             String term = query[i];
-            int[][] termData = index.getTermData(term);
+            CoordVector[] termData = index.getTermData(term);
             if (termData == null) continue; // if not from vocabulary then skip
-            queryData.put(index.getTermDictPos(term), Math.log((double) docVectors.length / (termData[0].length - 1)));
+            queryData.put(index.getTermDictPos(term), Math.log((double) docVectors.length / (termData[0].length)));
         }
         return new DocVector(queryData);
     }

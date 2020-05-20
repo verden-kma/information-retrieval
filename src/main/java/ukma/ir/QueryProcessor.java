@@ -1,6 +1,7 @@
 package ukma.ir;
 
 import ukma.ir.index.IndexServer;
+import ukma.ir.index.helpers.CoordVector;
 import ukma.ir.index.helpers.DocVector;
 
 import java.nio.file.Path;
@@ -110,37 +111,35 @@ public class QueryProcessor {
                 .map(Path::toString).sorted().collect(Collectors.toList());
     }
 
+    /**
+     * decode data of each vector
+     * @param v - vector
+     * @return array of decoded docIDs of the passed vector
+     */
+    private int[] decodeCoordVectors(CoordVector[] v) {
+        int[] docIDs = new int[v.length];
+        for (int i = 0, nextDoc = 0; i < docIDs.length; i++)
+            docIDs[i] = nextDoc += v[i].getDocID();
+
+        for (int i = 0; i < v.length; i++) {
+            decode(v[i].getCoords());
+        }
+        return docIDs;
+    }
+
     private List<int[]> positionalIntersect(String t1, String t2, int dist) {
         ArrayList<int[]> answer = new ArrayList<>();
-        int[][] tData_1 = indexService.getTermData(t1);
-        int[][] tData_2 = indexService.getTermData(t2);
+        CoordVector[] v1 = indexService.getTermData(t1);
+        CoordVector[] v2 = indexService.getTermData(t2);
 
-        int[] docIDs1 = new int[tData_1.length];
-        for (int i = 0, nextDoc = 0; i < docIDs1.length; i++)
-            docIDs1[i] = nextDoc += tData_1[i][0];
-
-        for (int i = 0; i < tData_1.length; i++) {
-            tData_1[i] = Arrays.copyOfRange(tData_1[i], 1, tData_1[i].length);
-            decode(tData_1[i]);
-        }
-
-        int[] docIDs2 = new int[tData_1.length];
-        for (int j = 0, nextDoc = 0; j < tData_2.length; j++)
-            docIDs2[j] = nextDoc += tData_2[j][0];
-
-        for (int j = 0; j < tData_2.length; j++) {
-            tData_2[j] = Arrays.copyOfRange(tData_2[j], 1, tData_2[j].length);
-            decode(tData_2[j]);
-        }
+        int[] docIDs1 = decodeCoordVectors(v1);
+        int[] docIDs2 = decodeCoordVectors(v2);
 
         for (int i = 0, j = 0; i < docIDs1.length && j < docIDs2.length; ) {
             if (docIDs1[i] == docIDs2[j]) {
                 Queue<Integer> candidates = new ArrayDeque<>();
-                int[] coords1 = tData_1[i];
-                int[] coords2 = tData_2[j];
-
-                for (Integer pos1 : coords1) {
-                    for (Integer pos2 : coords2)
+                for (Integer pos1 : v1[i].getCoords()) {
+                    for (Integer pos2 : v2[j].getCoords())
                         if (pos1 - pos2 < dist) candidates.add(pos2);
                         else if (pos2 > pos1) break;
 

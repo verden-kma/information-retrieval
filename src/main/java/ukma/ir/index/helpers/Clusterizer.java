@@ -64,6 +64,7 @@ public class Clusterizer {
         return leaders;
     }
 
+    //fixme: suspect wrong tf-idf implementation
     public static DocVector[] buildDocVectors(int documents, IndexBody index) {
         DocVector[] docVectors = new DocVector[documents];
         for (int i = 0; i < docVectors.length; i++)
@@ -72,11 +73,11 @@ public class Clusterizer {
         Iterator<String> vocabulary = index.iterator();
         for (int i = 0; vocabulary.hasNext(); i++) {
 
-            int[][] termData = index.getTermData(vocabulary.next());
+            CoordVector[] termData = index.getTermData(vocabulary.next());
             int termFr = termData.length;
-            for (int[] termDatum : termData) {
-                int docID = termDatum[0];
-                docVectors[docID].addTermScore(i, termFr * Math.log((double) docVectors.length / (termData[0].length - 1)));
+            for (CoordVector termDatum : termData) {
+                docVectors[termDatum.getDocID()].addTermScore(i,
+                        termFr * Math.log((double) documents / termData[0].length));
             }
         }
         for (DocVector v : docVectors)
