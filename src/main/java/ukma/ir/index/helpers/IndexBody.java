@@ -1,15 +1,13 @@
 package ukma.ir.index.helpers;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.RandomAccessFile;
+import java.io.*;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
 import static ukma.ir.index.helpers.VLC.readVLC;
 
 public class IndexBody implements Iterable<String> {
-    private int[][] dict; // 0th - start index of term, 1st - fleckID, 2nd - in-fleck start pos (1/2), 3rd - (2/2) 4rd - docFr
+    private int[][] dict; // 0th - start index of term, 1st - fleckID, 2nd - in-fleck start pos (1/2), 3rd - (2/2)
     private int[][] revDict;
     private String vocabStr;
     private String reVocabStr;
@@ -75,23 +73,19 @@ public class IndexBody implements Iterable<String> {
     }
 
     /**
-     * @return position of the term in straight dictionary
+     * @return position of the term inside the straight dictionary
      */
     public int getTermDictPos(String term) {
         return (int) (findTerm(term, dict, vocabStr, false) >> 32);
     }
-
-    //TODO: optimization
-    // 1) do not store docFr in memory
-    // 2) use buffer https://stackoverflow.com/questions/5614206/buffered-randomaccessfile-java
 
     /**
      * find documents and positions at which term resides
      *
      * @param term in index to search
      * @return array of vectors with <em>encoded</em> docID and associated array of <em>encoded</em> coordinates
-     * of the <br> term entries into the document or null if no such term found <br>
-     * document frequency = length,<br> term fr. = length of the vector
+     * of the term entries into the document or null if no such term found
+     * <p>document frequency = number of vectors,<br> term fr. = length of a vector</p>
      * @throws NoSuchElementException if index data has been corrupted
      */
     public CoordVector[] getTermData(String term) {
@@ -105,15 +99,15 @@ public class IndexBody implements Iterable<String> {
         assert inFleckPos < new File(path).length();
         try (RandomAccessFile raf = new RandomAccessFile(path, "r")) {
             raf.seek(inFleckPos);
+            BufferedInputStream bis = new BufferedInputStream(new FileInputStream(raf.getFD()));
             int docFreq = raf.readInt();
             CoordVector[] termStat = new CoordVector[docFreq];
-            assert (docFreq == infoRow[4]);
             for (int i = 0; i < docFreq; i++) {
-                int docID = readVLC(raf);
-                int termFreq = readVLC(raf);
+                int docID = readVLC(bis);
+                int termFreq = readVLC(bis);
                 int[] coords = new int[termFreq];
                 for (int j = 0; j < coords.length; j++) {
-                    coords[j] = readVLC(raf);
+                    coords[j] = readVLC(bis);
                 }
                 termStat[i] = new CoordVector(docID, coords);
             }
@@ -125,7 +119,7 @@ public class IndexBody implements Iterable<String> {
 
     private void buildDictionary(TermData[] sortedTermData) {
         StringBuilder vocabStr = new StringBuilder();
-        dict = new int[sortedTermData.length][5];
+        dict = new int[sortedTermData.length][4];
         for (int i = 0; i < sortedTermData.length; i++) {
             int[] termData = dict[i];
             TermData currTermData = sortedTermData[i];
@@ -133,7 +127,6 @@ public class IndexBody implements Iterable<String> {
             termData[1] = currTermData.getFleckID();
             termData[2] = (int) (currTermData.getFleckPos() >> 32); //first 4 bytes
             termData[3] = (int) currTermData.getFleckPos(); // last 4 bytes
-            termData[4] = currTermData.getDocFr();
             vocabStr.append(currTermData.getTerm());
         }
         this.vocabStr = vocabStr.toString();

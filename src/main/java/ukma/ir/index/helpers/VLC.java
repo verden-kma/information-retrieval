@@ -1,8 +1,8 @@
 package ukma.ir.index.helpers;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 
 public class VLC {
     public static long writeVLC(BufferedOutputStream fleck, int number) throws IOException {
@@ -20,10 +20,10 @@ public class VLC {
         return vlc.length - front;
     }
 
-    static int readVLC(RandomAccessFile raf) throws IOException {
+    static int readVLC(BufferedInputStream bis) throws IOException {
         int res = 0;
         while (true) {
-            byte next = raf.readByte();
+            byte next = (byte) bis.read();
             if (next >= 0) res = res * 128 + next;
             else return res * 128 + (next & 0b01111111);
         }

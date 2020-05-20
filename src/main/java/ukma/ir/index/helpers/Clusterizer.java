@@ -64,7 +64,7 @@ public class Clusterizer {
         return leaders;
     }
 
-    //fixme: suspect wrong tf-idf implementation
+    // TODO: implement pivoted doc len normalization instead of cosine similarity
     public static DocVector[] buildDocVectors(int documents, IndexBody index) {
         DocVector[] docVectors = new DocVector[documents];
         for (int i = 0; i < docVectors.length; i++)
@@ -74,10 +74,9 @@ public class Clusterizer {
         for (int i = 0; vocabulary.hasNext(); i++) {
 
             CoordVector[] termData = index.getTermData(vocabulary.next());
-            int termFr = termData.length;
             for (CoordVector termDatum : termData) {
                 docVectors[termDatum.getDocID()].addTermScore(i,
-                        termFr * Math.log((double) documents / termData[0].length));
+                        termDatum.length * Math.log((double) documents / termData.length));
             }
         }
         for (DocVector v : docVectors)
