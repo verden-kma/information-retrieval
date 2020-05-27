@@ -6,24 +6,28 @@ import javafx.scene.control.Alert;
 import java.io.*;
 import java.util.Map;
 
-public class DocVector {
+public class DocVector implements Serializable {
+
+    private static final long serialVersionUID = 2944980064668576062L;
 
     static {
         // no time for AppData path
         String path = "data/doc_vectors";
         File dirs = new File(path);
-        dirs.mkdirs();
+        if (!dirs.exists())
+            dirs.mkdirs();
     }
 
     private final static String PATH_TEMPLATE = ("data/doc_vectors/vec%d.bin");
     private final int ordinal;
     private final String filePath;
+    private transient RandomAccessFile bridge;
     private int entries;
-    private RandomAccessFile bridge;
     private double squareSum;
-    private boolean isBuilding = true;
+    private transient boolean isBuilding;
 
-    public DocVector(int docID) {
+    DocVector(int docID) {
+        isBuilding = true; // if deserialized, then false
         ordinal = docID;
         filePath = String.format(PATH_TEMPLATE, docID);
         try {

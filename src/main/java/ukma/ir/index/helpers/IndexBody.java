@@ -6,7 +6,10 @@ import java.util.NoSuchElementException;
 
 import static ukma.ir.index.helpers.VLC.readVLC;
 
-public class IndexBody implements Iterable<String> {
+public class IndexBody implements Iterable<String>, Serializable {
+
+    private static final long serialVersionUID = 6809260439636108723L;
+
     private int[][] dict; // 0th - start index of term, 1st - fleckID, 2nd - in-fleck start pos (1/2), 3rd - (2/2)
     private int[][] revDict;
     private String vocabStr;

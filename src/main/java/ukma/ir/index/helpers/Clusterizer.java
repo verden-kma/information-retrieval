@@ -72,7 +72,6 @@ public class Clusterizer {
 
         Iterator<String> vocabulary = index.iterator();
         for (int i = 0; vocabulary.hasNext(); i++) {
-
             CoordVector[] termData = index.getTermData(vocabulary.next());
             for (CoordVector termDatum : termData) {
                 docVectors[termDatum.getDocID()].addTermScore(i,

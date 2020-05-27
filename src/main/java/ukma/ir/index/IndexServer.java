@@ -18,12 +18,13 @@ import static java.lang.String.valueOf;
 import static ukma.ir.index.helpers.VLC.writeVLC;
 
 /*
-TODO: [docFr] [(docID TermFr)_0 ... (docID TermFr)_n-1] [(coord_0 ... coord_i-1)_0 ... (coord_0 ... coord_j-1)_n-1]
-         ||              ||                   ||
-          n               i                    j
+TODO: <term> [docFr] [(docID TermFr)_0 ... (docID TermFr)_n-1] [(coord_0 ... coord_i-1)_0 ... (coord_0 ... coord_j-1)_n-1]
+                ||              ||                   ||
+                 n               i                    j
 */
 
-public class IndexServer implements Serializable {
+// -Xms5G -Xmx5G -XX:+UseG1GC -XX:+UseStringDeduplication
+public class IndexServer {
 
     static {
         // no time for AppData path
@@ -42,8 +43,6 @@ public class IndexServer implements Serializable {
     private static transient final char COORD_SEP = ' ';
     private static transient final char TF_SEP = '#'; // TERM_FREQUENCY
     private transient Path LIBRARY = Paths.get("G:\\project\\library\\custom");
-//    private static final String TERM_PATHS = "data/cache/term.bin";
-//    private static final String DOC_ID_PATH = "data/cache/docId.bin";
 
     private final BiMap<String, Integer> docId; // path - docId
     // term - id of the corresponding index file
@@ -62,13 +61,28 @@ public class IndexServer implements Serializable {
     private static transient final Object locker = new Object();
     private static transient long startTime = System.currentTimeMillis();
 
-    public static long getTime() {
+    private static long getTime() {
         return (System.currentTimeMillis() - startTime) / 1000;
     }
 
-
     private IndexServer() {
-        docId = HashBiMap.create();
+        BiMap<String, Integer> cachedDocIds = null;
+        if (CacheManager.filesPresent()) {
+            System.out.println("try to load cache");
+            try {
+                index = CacheManager.loadCache(CacheManager.Fields.INDEX);
+                docVectors = CacheManager.loadCache(CacheManager.Fields.DOC_VECTORS);
+                clusters = CacheManager.loadCache(CacheManager.Fields.CLUSTERS);
+                cachedDocIds = CacheManager.loadCache(CacheManager.Fields.PATH_DOC_ID_MAP);
+            } catch (Exception e) {
+                System.out.println("failed to load cache");
+                e.printStackTrace();
+                index = null;
+                docVectors = null;
+                clusters = null;
+            }
+        }
+        docId = cachedDocIds == null ? HashBiMap.create() : cachedDocIds;
     }
 
     // there is no need to have multiple instances of this class as it is not supposed to be stored in collections
@@ -158,6 +172,7 @@ public class IndexServer implements Serializable {
         }
         long endTime = System.nanoTime();
         System.out.println("Total time: " + (endTime - startTime) / 1e9);
+        CacheManager.saveCache(docId, index, docVectors, clusters);
     }
 
     public DocVector buildQueryVector(String[] query) {
@@ -316,8 +331,6 @@ public class IndexServer implements Serializable {
     private void transferMerge(long numTermsPerFleck) throws IOException {
         saveParticles();
         dictionary = null;
-
-        System.out.println("Start transfer Merge");
 
         List<TermData> termData = new ArrayList<>();
         int tupleIndex = 0;

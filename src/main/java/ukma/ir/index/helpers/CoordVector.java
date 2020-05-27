@@ -7,7 +7,7 @@ public class CoordVector {
     private final int[] coords;
     public final int length;
 
-    public CoordVector(int docID, int[] coords) {
+    CoordVector(int docID, int[] coords) {
         this.docID = docID;
         this.coords = coords;
         length = coords.length;
