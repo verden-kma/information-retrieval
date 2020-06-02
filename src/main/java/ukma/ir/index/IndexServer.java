@@ -74,6 +74,7 @@ public class IndexServer {
                 docVectors = CacheManager.loadCache(CacheManager.Fields.DOC_VECTORS);
                 clusters = CacheManager.loadCache(CacheManager.Fields.CLUSTERS);
                 cachedDocIds = CacheManager.loadCache(CacheManager.Fields.PATH_DOC_ID_MAP);
+                System.out.println("loaded cache");
             } catch (Exception e) {
                 System.out.println("failed to load cache");
                 e.printStackTrace();
@@ -82,7 +83,13 @@ public class IndexServer {
                 clusters = null;
             }
         }
-        docId = cachedDocIds == null ? HashBiMap.create() : cachedDocIds;
+        if (cachedDocIds != null) {
+            docId = cachedDocIds;
+        }
+        else  {
+            docId = HashBiMap.create();
+            buildInvertedIndex();
+        }
     }
 
     // there is no need to have multiple instances of this class as it is not supposed to be stored in collections
@@ -141,7 +148,7 @@ public class IndexServer {
         return m.stem(token.toLowerCase().replaceAll("\\W", ""));
     }
 
-    public void buildInvertedIndex() {
+    private void buildInvertedIndex() {
         System.out.println("start building");
         long startTime = System.nanoTime();
         dictionary = new TreeMap<>();
@@ -240,6 +247,7 @@ public class IndexServer {
 
                 for (int n = 0; terms.hasNextTerm(); n++) {
                     String term = terms.nextTerm();
+
                     vocabulary.putIfAbsent(term, new ArrayList<>());
                     vocabulary.get(term).add(n);
 
@@ -327,7 +335,6 @@ public class IndexServer {
         System.gc();
     }
 
-    // suspect bugs on writing vlc after docFr 35th byte -> int vlc vlc [ok] -> int [wrong] ...
     private void transferMerge(long numTermsPerFleck) throws IOException {
         saveParticles();
         dictionary = null;
@@ -353,7 +360,7 @@ public class IndexServer {
 
             PriorityQueue<PTP> docIdPQ = new PriorityQueue<>(PTP.getComparator(PTP.State.DOC_ID));
             docIdPQ.add(termHead.getNext()); // state == post docID
-// add termHead.term to docsFr
+            // add termHead.term to docsFr
             Set<Integer> docsFr = new HashSet<>();
             while (!termsPQ.isEmpty() && termHead.equalsTerm(termsPQ.peek())) {// come through all terms
                 PTP sameTerm = termsPQ.poll();
@@ -396,14 +403,23 @@ public class IndexServer {
                 writtenBytes += writeVLC(fleck, -(prevDocId - (prevDocId = docIdHead.getCurrDocID())));
                 writtenBytes += writeVLC(fleck, totalTermFr);
 
+                int lastCoord = 0;
+                int currCoord;
+                int coordsWritten = 0;
                 while (!posPQ.isEmpty()) { // come through all coords of current doc
                     PTP nextPos = posPQ.poll();
 
-                    assert nextPos != null; // nextPos cannot be null because at least docIdHead is in posPQ
-                    writtenBytes += writeVLC(fleck, nextPos.getCurrPos());
+                    // nextPos cannot be null because at least docIdHead is in posPQ
+                    currCoord = nextPos.getCurrPos();
+                    writtenBytes += writeVLC(fleck, currCoord - lastCoord);
+                    lastCoord = currCoord;
+                    coordsWritten++;
 
                     while (nextPos.getCurrState() == PTP.State.POSITION) {
-                        writtenBytes += writeVLC(fleck, -(nextPos.getCurrPos() - nextPos.getNext().getCurrPos()));
+                        currCoord = nextPos.getNext().getCurrPos();
+                        writtenBytes += writeVLC(fleck, currCoord - lastCoord);
+                        lastCoord = currCoord;
+                        coordsWritten++;
                     }
 
                     switch (nextPos.getCurrState()) {
@@ -419,6 +435,7 @@ public class IndexServer {
                             break;
                     }
                 }
+                assert(coordsWritten == totalTermFr);
             }
 
             assert (docsFr.size() != 0);

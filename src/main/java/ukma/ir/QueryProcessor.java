@@ -88,6 +88,7 @@ public class QueryProcessor {
     }
 
     public List<String> processPositionalQuery(String query) {
+        //example: term1 /1 term2 /2 term3
         if (!query.matches("\\w+(\\s+/\\d+\\s+\\w+)*"))
             throw new IllegalArgumentException("Wrong input format");
         String[] tokens = query.split("\\s+");
@@ -121,7 +122,7 @@ public class QueryProcessor {
         for (int i = 0, nextDoc = 0; i < docIDs.length; i++)
             docIDs[i] = nextDoc += v[i].getDocID();
 
-        for (int i = 0; i < v.length; i++) {
+        for (int i = 0; i < v.length; i++) {//i = 152 - wrong coords
             decode(v[i].getCoords());
         }
         return docIDs;
@@ -140,10 +141,11 @@ public class QueryProcessor {
                 Queue<Integer> candidates = new ArrayDeque<>();
                 for (Integer pos1 : v1[i].getCoords()) {
                     for (Integer pos2 : v2[j].getCoords())
-                        if (pos1 - pos2 < dist) candidates.add(pos2);
+                        if (Math.abs(pos1 - pos2) <= dist) candidates.add(pos2);
                         else if (pos2 > pos1) break;
 
-                    while (candidates.size() > 0 && candidates.peek() - pos1 > dist) candidates.remove();
+
+                    while (candidates.size() > 0 && Math.abs(candidates.peek() - pos1) > dist) candidates.remove();
                     for (int k = 0; k < candidates.size(); k++)
                         answer.add(new int[]{docIDs1[i], pos1, candidates.remove()});
                 }
