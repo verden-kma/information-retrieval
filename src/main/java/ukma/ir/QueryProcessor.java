@@ -1,6 +1,6 @@
 package ukma.ir;
 
-import ukma.ir.index.IndexServer;
+import ukma.ir.index.IndexService;
 import ukma.ir.index.helpers.CoordVector;
 import ukma.ir.index.helpers.DocVector;
 
@@ -10,9 +10,13 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class QueryProcessor {
+    private final IndexService indexService; //IndexService.getInstance().buildInvertedIndex(); // for debug
 
-    private final IndexServer indexService = IndexServer.getInstance();
+    public QueryProcessor(IndexService service) {
+        indexService = service;
+    }
 
+    // they said java is too verbose..
     private void decode(int[] encoded) {
         for (int i = 0, nextDoc = 0; i < encoded.length; encoded[i] = nextDoc += encoded[i++]) ;
     }
@@ -25,8 +29,10 @@ public class QueryProcessor {
      * @param q - trimmed query to be processed
      * @return list of documents that match a given query
      */
+    //todo: make a better regex validation
     public List<String> processBooleanQuery(String q) {
         if (!q.matches("\\s*\\w[\\w\\s]*")) throw new IllegalArgumentException("incorrect input");
+//        if (!q.matches("^\\s*(NOT)?\\s+\\w+?\\s*((AND(\\s+NOT)?|OR)\\s+\\w+?\\s*)*$")) throw new IllegalArgumentException("incorrect input");
         Set<Integer> reminders = new HashSet<>();
         Arrays.stream(q.split("\\s*OR\\s*"))
                 .map(union -> union.split("\\s*AND\\s*"))
@@ -35,8 +41,8 @@ public class QueryProcessor {
                     List<String> excludeTerms = new ArrayList<>();
                     for (String token : unionParticle)
                         if (token.startsWith("NOT")) // normalizer might return null
-                            excludeTerms.add(IndexServer.normalize(token.substring(token.lastIndexOf(' ') + 1)));
-                        else includeTerms.add(IndexServer.normalize(token));
+                            excludeTerms.add(IndexService.normalize(token.substring(token.lastIndexOf(' ') + 1)));
+                        else includeTerms.add(IndexService.normalize(token));
 
                     // if there are terms to include and one of these terms is in dictionary (in this case - 0th),
                     // i.e. input is not empty
@@ -50,13 +56,12 @@ public class QueryProcessor {
                         addAllDecoded(inDocs, postings);
 
                         includeTerms.forEach(term -> {
-                            int[] posting = indexService.getPostings(term);
-                            if (posting != null) { // intersect
-                                decode(posting);
-                                for (int p : posting) // retainAll
-                                    if (!inDocs.contains(p))
-                                        inDocs.remove(p);
-                            }
+                            int[] postingArr = indexService.getPostings(term);
+                            decode(postingArr);
+                            List<Integer> postList = new ArrayList<>(postingArr.length);
+                            for (int doc : postingArr) // couldn't find moore efficient way to intersect
+                                postList.add(doc);
+                            inDocs.retainAll(postList);
                         });
                     } else return;
 
@@ -96,7 +101,7 @@ public class QueryProcessor {
         int[] distance = new int[tokens.length / 2];
 
         for (int i = 0, j = 0; i < tokens.length; j++, i += 2) {
-            terms[j] = IndexServer.normalize(tokens[i]);
+            terms[j] = IndexService.normalize(tokens[i]);
             if (!indexService.containsElement(terms[j])) return new ArrayList<>(0);
         }
 
@@ -114,6 +119,7 @@ public class QueryProcessor {
 
     /**
      * decode data of each vector
+     *
      * @param v - vector
      * @return array of decoded docIDs of the passed vector
      */
@@ -178,7 +184,7 @@ public class QueryProcessor {
             Set<String> matchSuf = new TreeSet<>();
 
             if (term.indexOf('*') == -1) {
-                String normTerm = IndexServer.normalize(term);
+                String normTerm = IndexService.normalize(term);
                 if (normTerm == null) continue;
                 int[] postings = indexService.getPostings(normTerm);
                 addAllDecoded(termContribution, postings);
@@ -231,7 +237,7 @@ public class QueryProcessor {
     public List<String> processClusterQuery(String q) {
         if (!q.matches("[\\w\\s]+")) throw new IllegalArgumentException("wrong query pattern");
         String[] query = Stream.of(q.split("\\s+"))
-                .map(IndexServer::normalize)
+                .map(IndexService::normalize)
                 .filter(Objects::nonNull)
                 .toArray(String[]::new);
         if (query.length == 0) throw new IllegalArgumentException("invalid words");

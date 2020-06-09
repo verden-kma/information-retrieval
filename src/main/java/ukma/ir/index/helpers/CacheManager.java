@@ -2,8 +2,8 @@ package ukma.ir.index.helpers;
 
 import com.google.common.collect.BiMap;
 
-
 import java.io.*;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
@@ -81,5 +81,16 @@ public class CacheManager {
         T res = (T) ois.readObject();
         ois.close();
         return res;
+    }
+
+    public static void deleteCache() {
+        try {
+            Files.deleteIfExists(INDEX_PATH);
+            Files.deleteIfExists(DOC_ID_PATH);
+            Files.deleteIfExists(VECTORS_PATH);
+            Files.deleteIfExists(CLUSTERS_PATH);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 }

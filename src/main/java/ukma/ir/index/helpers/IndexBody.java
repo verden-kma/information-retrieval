@@ -70,6 +70,7 @@ public class IndexBody implements Iterable<String>, Serializable {
      */
     public int[] getPostings(String term) {
         CoordVector[] fullInfo = getTermData(term);
+        if (fullInfo == null) return new int[0];
         int[] res = new int[fullInfo.length];
         for (int i = 0; i < res.length; i++) res[i] = fullInfo[i].getDocID();
         return res;

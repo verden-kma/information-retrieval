@@ -6,7 +6,6 @@ import javafx.scene.Scene;
 import javafx.stage.Stage;
 import ukma.ir.controllers.MainController;
 import ukma.ir.controllers.ResultController;
-import ukma.ir.index.IndexServer;
 
 public class App extends Application {
     private Scene mainScene, resultScene;
@@ -37,7 +36,6 @@ public class App extends Application {
 
         // bind list of answers from main controller to the list view in
         rc.bindList(mc.getModel());
-        IndexServer.getInstance();//.buildInvertedIndex(); // for debug
         primaryStage.show();
     }
 

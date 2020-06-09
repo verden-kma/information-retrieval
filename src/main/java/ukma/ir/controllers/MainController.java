@@ -7,21 +7,22 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.ChoiceBox;
 import javafx.scene.control.TextField;
 import ukma.ir.App;
-import ukma.ir.index.IndexServer;
 import ukma.ir.QueryProcessor;
+import ukma.ir.index.IndexService;
 
 public class MainController {
 
     private App entry;
+    private final QueryProcessor qp = new QueryProcessor(IndexService.getInstance());
     private ObservableList<String> queryResponse = FXCollections.observableArrayList();
     @FXML
     private TextField inputField;
     @FXML
-    private ChoiceBox<IndexServer.IndexType> searchMode;
+    private ChoiceBox<IndexService.IndexType> searchMode;
 
     public void initVisual() {
-        searchMode.getItems().addAll(IndexServer.IndexType.values());
-        searchMode.setValue(IndexServer.IndexType.TERM);
+        searchMode.getItems().addAll(IndexService.IndexType.values());
+        searchMode.setValue(IndexService.IndexType.TERM);
     }
 
     @FXML
@@ -34,7 +35,6 @@ public class MainController {
             }
             query = query.trim();
 
-            QueryProcessor qp = new QueryProcessor();
             switch (searchMode.getSelectionModel().getSelectedItem()) {
                 case TERM:
                     queryResponse.setAll(qp.processBooleanQuery(query));

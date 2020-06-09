@@ -24,7 +24,7 @@ TODO: <term> [docFr] [(docID TermFr)_0 ... (docID TermFr)_n-1] [(coord_0 ... coo
 */
 
 // -Xms5G -Xmx5G -XX:+UseG1GC -XX:+UseStringDeduplication
-public class IndexServer {
+public class IndexService {
 
     static {
         // no time for AppData path
@@ -33,39 +33,39 @@ public class IndexServer {
         dirs.mkdirs();
     }
 
-    private static transient final int WORKERS = Runtime.getRuntime().availableProcessors();
-    private static transient final String TEMP_PARTICLES = "data/dictionary/dp%d.txt";
-    private static transient final String INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
-    private static transient final long WORKERS_MEMORY_LIMIT = Math.round(Runtime.getRuntime().maxMemory() * 0.5);
-    private static transient final long MAX_MEMORY_LOAD = Math.round(Runtime.getRuntime().maxMemory() * 0.7);
-    private static transient final char NEXT_DOC_SEP = ':'; // TERM_DOC
-    private static transient final char DOC_COORD_SEP = '>'; // DOC_COORDINATE
-    private static transient final char COORD_SEP = ' ';
-    private static transient final char TF_SEP = '#'; // TERM_FREQUENCY
-    private transient Path LIBRARY = Paths.get("G:\\project\\library\\custom");
+    private static final int WORKERS = Runtime.getRuntime().availableProcessors();
+    private static final String TEMP_PARTICLES = "data/dictionary/dp%d.txt";
+    private static final String INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
+    private static final long WORKERS_MEMORY_LIMIT = Math.round(Runtime.getRuntime().maxMemory() * 0.5);
+    private static final long MAX_MEMORY_LOAD = Math.round(Runtime.getRuntime().maxMemory() * 0.7);
+    private static final char NEXT_DOC_SEP = ':'; // TERM_DOC
+    private static final char DOC_COORD_SEP = '>'; // DOC_COORDINATE
+    private static final char COORD_SEP = ' ';
+    private static final char TF_SEP = '#'; // TERM_FREQUENCY
+    private static Path library = Paths.get("G:/project/library/custom"); // default path
 
     private final BiMap<String, Integer> docId; // path - docId
     // term - id of the corresponding index file
     private IndexBody index;
-    private static IndexServer instance; // effectively final
-    private static transient final Morphology MORPH = new Morphology();
+    private static IndexService instance; // effectively final
+    private static final Morphology MORPH = new Morphology();
     private DocVector[] docVectors;
     private Map<Integer, DocVector[]> clusters;
 
     // building-time variables
-    private transient int numStoredDictionaries;
-    private transient final CountDownLatch completion = new CountDownLatch(WORKERS);
+    private int numStoredDictionaries;
+    private final CountDownLatch completion = new CountDownLatch(WORKERS);
     // hash function is effective for Integer
     // <term, Hash<docID, positions>> size of map == df, size of positions == tf
-    private transient TreeMap<String, HashMap<Integer, ArrayList<Integer>>> dictionary;
-    private static transient final Object locker = new Object();
-    private static transient long startTime = System.currentTimeMillis();
+    private TreeMap<String, HashMap<Integer, ArrayList<Integer>>> dictionary;
+    private static final Object locker = new Object();
+    private static long startTime = System.currentTimeMillis();
 
     private static long getTime() {
         return (System.currentTimeMillis() - startTime) / 1000;
     }
 
-    private IndexServer() {
+    private IndexService() {
         BiMap<String, Integer> cachedDocIds = null;
         if (CacheManager.filesPresent()) {
             System.out.println("try to load cache");
@@ -85,8 +85,7 @@ public class IndexServer {
         }
         if (cachedDocIds != null) {
             docId = cachedDocIds;
-        }
-        else  {
+        } else {
             docId = HashBiMap.create();
             buildInvertedIndex();
         }
@@ -95,11 +94,25 @@ public class IndexServer {
     // there is no need to have multiple instances of this class as it is not supposed to be stored in collections
     // creating multiple instances and running them simultaneously may use more threads than expected
     // it can be refactored to take an array of strings if the files are spread across multiple files
-    public static IndexServer getInstance() {
+    public static IndexService getInstance() {
         synchronized (locker) {
-            if (instance == null) instance = new IndexServer();
+            if (instance == null) instance = new IndexService();
             return instance;
         }
+    }
+
+    public static IndexService buildInstance(String libraryPath) {
+        synchronized (locker) {
+            if (instance == null) {
+                library = Paths.get(libraryPath);
+                instance = new IndexService();
+            }
+        }
+        return instance;
+    }
+
+    public static void clearCache() {
+        CacheManager.deleteCache();
     }
 
     // for GUI
@@ -153,7 +166,7 @@ public class IndexServer {
         long startTime = System.nanoTime();
         dictionary = new TreeMap<>();
 
-        try (Stream<Path> files = Files.walk(LIBRARY)) {
+        try (Stream<Path> files = Files.walk(library)) {
             File[] documents = files.filter(Files::isRegularFile)
                     .map(Path::toFile)
                     .peek(doc -> docId.put(doc.toString(), docId.size()))
@@ -435,7 +448,7 @@ public class IndexServer {
                             break;
                     }
                 }
-                assert(coordsWritten == totalTermFr);
+                assert (coordsWritten == totalTermFr);
             }
 
             assert (docsFr.size() != 0);
