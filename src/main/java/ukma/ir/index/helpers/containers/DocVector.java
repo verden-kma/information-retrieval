@@ -1,4 +1,4 @@
-package ukma.ir.index.helpers;
+package ukma.ir.index.helpers.containers;
 
 
 import javafx.scene.control.Alert;
@@ -26,7 +26,7 @@ public class DocVector implements Serializable {
     private double squareSum;
     private transient boolean isBuilding;
 
-    DocVector(int docID) {
+    public DocVector(int docID) {
         isBuilding = true; // if deserialized, then false
         ordinal = docID;
         filePath = String.format(PATH_TEMPLATE, docID);
@@ -45,7 +45,7 @@ public class DocVector implements Serializable {
         finishBuild();
     }
 
-    void addTermScore(int termNum, double tfIdf) {
+    public void addTermScore(int termNum, double tfIdf) {
         if (!isBuilding) throw new IllegalStateException("vector is already built");
         try {
             bridge.writeInt(termNum);
@@ -57,7 +57,7 @@ public class DocVector implements Serializable {
         }
     }
 
-    void finishBuild() {
+    public void finishBuild() {
         isBuilding = false;
         try {
             bridge.close();

@@ -1,10 +1,14 @@
 package ukma.ir.index.helpers;
 
+import ukma.ir.index.helpers.containers.CoordVector;
+import ukma.ir.index.helpers.containers.TermData;
+import ukma.ir.index.helpers.utils.Quick3string;
+
 import java.io.*;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
-import static ukma.ir.index.helpers.VLC.readVLC;
+import static ukma.ir.index.helpers.utils.VLC.readVLC;
 
 public class IndexBody implements Iterable<String>, Serializable {
 

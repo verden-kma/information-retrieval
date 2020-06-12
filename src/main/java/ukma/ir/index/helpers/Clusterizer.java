@@ -1,5 +1,8 @@
 package ukma.ir.index.helpers;
 
+import ukma.ir.index.helpers.containers.CoordVector;
+import ukma.ir.index.helpers.containers.DocVector;
+
 import java.util.*;
 
 public class Clusterizer {
@@ -83,22 +86,24 @@ public class Clusterizer {
 
         return docVectors;
     }
+
+    private static class Follower {
+        int leader = -1;
+        float sim = 0;
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            Follower follower = (Follower) o;
+            return leader == follower.leader;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(leader);
+        }
+    }
 }
 
-class Follower {
-    int leader = -1;
-    float sim = 0;
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        Follower follower = (Follower) o;
-        return leader == follower.leader;
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(leader);
-    }
-}

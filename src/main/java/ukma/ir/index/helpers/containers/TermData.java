@@ -1,4 +1,4 @@
-package ukma.ir.index.helpers;
+package ukma.ir.index.helpers.containers;
 
 public class TermData implements CharSequence {
     private final String term;

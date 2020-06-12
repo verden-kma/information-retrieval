@@ -10,23 +10,37 @@ import ukma.ir.App;
 import ukma.ir.QueryProcessor;
 import ukma.ir.index.IndexService;
 
-public class MainController {
+import java.util.HashMap;
+import java.util.Map;
 
+public class MainController {
+    private static final Map<IndexService.IndexType, String> PROMPTS = new HashMap<>(IndexService.IndexType.values().length);
+    private static final IndexService.IndexType INITIAL_TYPE = IndexService.IndexType.BOOLEAN;
     private App entry;
-    private final QueryProcessor qp = new QueryProcessor(IndexService.getInstance());
-    private ObservableList<String> queryResponse = FXCollections.observableArrayList();
+    private QueryProcessor processor;
+    private final ObservableList<String> queryResponse = FXCollections.observableArrayList();
     @FXML
     private TextField inputField;
     @FXML
     private ChoiceBox<IndexService.IndexType> searchMode;
 
-    public void initVisual() {
+    static {
+        PROMPTS.put(IndexService.IndexType.BOOLEAN, "e.g. pen AND pineapple OR apple AND NOT pen");
+        PROMPTS.put(IndexService.IndexType.COORDINATE, "e.g. private /3 membership");
+        PROMPTS.put(IndexService.IndexType.JOKER, "e.g. pneumono*scopic*coniosis");
+    }
+
+    public void initView() {
         searchMode.getItems().addAll(IndexService.IndexType.values());
-        searchMode.setValue(IndexService.IndexType.TERM);
+        searchMode.setValue(INITIAL_TYPE);
+        inputField.setPromptText(PROMPTS.get(INITIAL_TYPE));
+        searchMode.setOnAction((actionEvent) -> inputField.setPromptText(PROMPTS.
+                get(searchMode.getSelectionModel().getSelectedItem())));
     }
 
     @FXML
     void search() {
+        if (processor == null) processor = QueryProcessor.getInstance();
         try {
             String query = inputField.getText();
             if (query == null || query.matches("\\s*")) {
@@ -36,17 +50,17 @@ public class MainController {
             query = query.trim();
 
             switch (searchMode.getSelectionModel().getSelectedItem()) {
-                case TERM:
-                    queryResponse.setAll(qp.processBooleanQuery(query));
+                case BOOLEAN:
+                    queryResponse.setAll(processor.processBooleanQuery(query));
                     break;
                 case COORDINATE:
-                    queryResponse.setAll(qp.processPositionalQuery(query));
+                    queryResponse.setAll(processor.processPositionalQuery(query));
                     break;
                 case JOKER:
-                    queryResponse.setAll(qp.processJokerQuery(query));
+                    queryResponse.setAll(processor.processJokerQuery(query));
                     break;
-                case CLUSTER:
-                    queryResponse.setAll(qp.processClusterQuery(query));
+//                case CLUSTER:
+//                    queryResponse.setAll(processor.processClusterQuery(query));
             }
             entry.showResult();
         } catch (IllegalArgumentException e) {

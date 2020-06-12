@@ -1,10 +1,12 @@
 package ukma.ir;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import ukma.ir.index.IndexService;
 
+import java.nio.file.Paths;
 import java.util.List;
 
 
@@ -14,7 +16,9 @@ public class TestBooleanRetrieval {
     @BeforeAll
     static void initIndex() {
         IndexService.clearCache();
-        queryProcessor = new QueryProcessor(IndexService.buildInstance("G:\\project\\infoSearch\\src\\test\\java\\ukma\\ir\\testing_files"));
+        queryProcessor = QueryProcessor.initQueryProcessor
+                (IndexService.buildIndex(
+                        Paths.get("G:\\project\\infoSearch\\src\\test\\java\\ukma\\ir\\testing_files")));
     }
 
     @Test
@@ -43,5 +47,10 @@ public class TestBooleanRetrieval {
         Assertions.assertThrows(IllegalArgumentException.class, () -> {
             queryProcessor.processBooleanQuery("fell $! off");
         });
+    }
+
+    @AfterAll
+    static void clearIndex() {
+        IndexService.clearCache();
     }
 }

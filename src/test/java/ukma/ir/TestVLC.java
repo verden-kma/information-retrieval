@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import ukma.ir.index.helpers.VLC;
+import ukma.ir.index.helpers.utils.VLC;
 
 import java.io.*;
 import java.nio.file.Files;

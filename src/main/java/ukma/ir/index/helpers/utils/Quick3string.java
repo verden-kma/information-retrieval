@@ -1,4 +1,4 @@
-package ukma.ir.index.helpers;
+package ukma.ir.index.helpers.utils;
 
 public class Quick3string {
     private static final int CUTOFF = 15;   // cutoff to insertion sort

@@ -4,6 +4,9 @@ import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import edu.stanford.nlp.process.Morphology;
 import ukma.ir.index.helpers.*;
+import ukma.ir.index.helpers.containers.CoordVector;
+import ukma.ir.index.helpers.containers.DocVector;
+import ukma.ir.index.helpers.containers.TermData;
 
 import javax.annotation.Nullable;
 import java.io.*;
@@ -15,7 +18,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.stream.Stream;
 
 import static java.lang.String.valueOf;
-import static ukma.ir.index.helpers.VLC.writeVLC;
+import static ukma.ir.index.helpers.utils.VLC.writeVLC;
 
 /*
 TODO: <term> [docFr] [(docID TermFr)_0 ... (docID TermFr)_n-1] [(coord_0 ... coord_i-1)_0 ... (coord_0 ... coord_j-1)_n-1]
@@ -42,12 +45,12 @@ public class IndexService {
     private static final char DOC_COORD_SEP = '>'; // DOC_COORDINATE
     private static final char COORD_SEP = ' ';
     private static final char TF_SEP = '#'; // TERM_FREQUENCY
-    private static Path library = Paths.get("G:/project/library/custom"); // default path
+    private Path library;// = Paths.get("G:/project/library/custom"); // default path
 
     private final BiMap<String, Integer> docId; // path - docId
     // term - id of the corresponding index file
     private IndexBody index;
-    private static IndexService instance; // effectively final
+    private static volatile IndexService instance; // effectively final once initialized
     private static final Morphology MORPH = new Morphology();
     private DocVector[] docVectors;
     private Map<Integer, DocVector[]> clusters;
@@ -65,50 +68,49 @@ public class IndexService {
         return (System.currentTimeMillis() - startTime) / 1000;
     }
 
-    private IndexService() {
-        BiMap<String, Integer> cachedDocIds = null;
-        if (CacheManager.filesPresent()) {
-            System.out.println("try to load cache");
+    private IndexService(IndexBody index, DocVector[] docVectors, Map<Integer, DocVector[]> clusters, BiMap<String, Integer> docId) {
+        this.index = index;
+        this.docVectors = docVectors;
+        this.clusters = clusters;
+        this.docId = docId;
+    }
+
+    private IndexService(Path libraryPath) {
+        docId = HashBiMap.create();
+        library = libraryPath;
+        buildInvertedIndex();
+    }
+
+    public static IndexService loadCache() throws CacheException {
+        synchronized (locker) {
+            if (!CacheManager.filesPresent()) throw new CacheException("Cache file(s) missing.");
             try {
-                index = CacheManager.loadCache(CacheManager.Fields.INDEX);
-                docVectors = CacheManager.loadCache(CacheManager.Fields.DOC_VECTORS);
-                clusters = CacheManager.loadCache(CacheManager.Fields.CLUSTERS);
-                cachedDocIds = CacheManager.loadCache(CacheManager.Fields.PATH_DOC_ID_MAP);
-                System.out.println("loaded cache");
+                IndexBody index = CacheManager.loadCache(CacheManager.Fields.INDEX);
+                DocVector[] docVectors = CacheManager.loadCache(CacheManager.Fields.DOC_VECTORS);
+                Map<Integer, DocVector[]> clusters = CacheManager.loadCache(CacheManager.Fields.CLUSTERS);
+                BiMap<String, Integer> docId = CacheManager.loadCache(CacheManager.Fields.PATH_DOC_ID_MAP);
+                return instance = new IndexService(index, docVectors, clusters, docId);
             } catch (Exception e) {
-                System.out.println("failed to load cache");
-                e.printStackTrace();
-                index = null;
-                docVectors = null;
-                clusters = null;
+                throw new CacheException("Cache data has been corrupted.", e);
             }
-        }
-        if (cachedDocIds != null) {
-            docId = cachedDocIds;
-        } else {
-            docId = HashBiMap.create();
-            buildInvertedIndex();
         }
     }
 
-    // there is no need to have multiple instances of this class as it is not supposed to be stored in collections
-    // creating multiple instances and running them simultaneously may use more threads than expected
-    // it can be refactored to take an array of strings if the files are spread across multiple files
+    public static IndexService buildIndex(Path path) {
+        synchronized (locker) {
+            return instance = new IndexService(path);
+        }
+    }
+
+    public static boolean hasInstance() {
+        return instance != null;
+    }
+
     public static IndexService getInstance() {
         synchronized (locker) {
-            if (instance == null) instance = new IndexService();
+            if (instance == null) throw new IndexNotBuiltException();
             return instance;
         }
-    }
-
-    public static IndexService buildInstance(String libraryPath) {
-        synchronized (locker) {
-            if (instance == null) {
-                library = Paths.get(libraryPath);
-                instance = new IndexService();
-            }
-        }
-        return instance;
     }
 
     public static void clearCache() {
@@ -117,7 +119,7 @@ public class IndexService {
 
     // for GUI
     public enum IndexType {
-        TERM, COORDINATE, JOKER, CLUSTER
+        BOOLEAN, COORDINATE, JOKER/*, CLUSTER*/
     }
 
     public boolean containsElement(String term) {
@@ -188,6 +190,7 @@ public class IndexService {
             System.out.println("build clusters, time: " + getTime());
             clusters = Clusterizer.buildClusters(docVectors);
         } catch (Exception e) {
+            // TODO: handle out of memory, prompt to user
             e.printStackTrace();
         }
         long endTime = System.nanoTime();
@@ -437,7 +440,7 @@ public class IndexService {
 
                     switch (nextPos.getCurrState()) {
                         case TERM:
-                            // switch to the post-TERM state (update term)
+                            // switch to the post-BOOLEAN state (update term)
                             termsPQ.add(nextPos.getNext());
                             break;
                         case DOC_ID:
@@ -568,7 +571,7 @@ public class IndexService {
             builder.setLength(0);
             if (nextChar == System.lineSeparator().charAt(0)) {
                 if (isWindows) br.skip(1);
-                // suspect EOF, if not EOF then save next term and change state to TERM
+                // suspect EOF, if not EOF then save next term and change state to BOOLEAN
                 // read saved term with next invocation
                 currentState = State.EOF;
                 if (fill() == null) br.close();

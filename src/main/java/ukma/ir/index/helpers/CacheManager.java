@@ -1,6 +1,7 @@
 package ukma.ir.index.helpers;
 
 import com.google.common.collect.BiMap;
+import ukma.ir.index.helpers.containers.DocVector;
 
 import java.io.*;
 import java.nio.file.Files;

@@ -1,8 +1,8 @@
 package ukma.ir;
 
 import ukma.ir.index.IndexService;
-import ukma.ir.index.helpers.CoordVector;
-import ukma.ir.index.helpers.DocVector;
+import ukma.ir.index.helpers.containers.CoordVector;
+import ukma.ir.index.helpers.containers.DocVector;
 
 import java.nio.file.Path;
 import java.util.*;
@@ -10,13 +10,31 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class QueryProcessor {
-    private final IndexService indexService; //IndexService.getInstance().buildInvertedIndex(); // for debug
+    private static final Object locker = new Object();
+    private static QueryProcessor instance;
+    private final IndexService indexService;
 
-    public QueryProcessor(IndexService service) {
+    public static QueryProcessor initQueryProcessor(IndexService index) {
+        synchronized (locker) {
+            if (instance == null)
+                return instance = new QueryProcessor(index);
+            throw new IllegalStateException("QueryProcessor has already been initialized.");
+        }
+    }
+
+    public static QueryProcessor getInstance() {
+        synchronized (locker) {
+            if (instance == null)
+                throw new IllegalStateException("QueryProcessor has not been initialized.");
+            return instance;
+        }
+    }
+
+    private QueryProcessor(IndexService service) {
         indexService = service;
     }
 
-    // they said java is too verbose..
+    // they said java is too verbose...
     private void decode(int[] encoded) {
         for (int i = 0, nextDoc = 0; i < encoded.length; encoded[i] = nextDoc += encoded[i++]) ;
     }

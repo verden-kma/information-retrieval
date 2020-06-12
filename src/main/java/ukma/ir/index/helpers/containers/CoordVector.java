@@ -1,4 +1,4 @@
-package ukma.ir.index.helpers;
+package ukma.ir.index.helpers.containers;
 
 import java.util.Objects;
 
@@ -7,7 +7,7 @@ public class CoordVector {
     private final int[] coords;
     public final int length;
 
-    CoordVector(int docID, int[] coords) {
+    public CoordVector(int docID, int[] coords) {
         this.docID = docID;
         this.coords = coords;
         length = coords.length;

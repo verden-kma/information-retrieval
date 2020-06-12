@@ -6,6 +6,7 @@ import javafx.scene.Scene;
 import javafx.stage.Stage;
 import ukma.ir.controllers.MainController;
 import ukma.ir.controllers.ResultController;
+import ukma.ir.controllers.StarterController;
 
 public class App extends Application {
     private Scene mainScene, resultScene;
@@ -18,12 +19,18 @@ public class App extends Application {
     @Override
     public void start(Stage primaryStage) throws Exception {
         primary = primaryStage;
+        FXMLLoader starterLoader = new FXMLLoader();
+        starterLoader.setLocation(getClass().getResource("/fxml/starter-frame.fxml"));
+        Scene starterScene = new Scene(starterLoader.load());
+        StarterController sc = starterLoader.getController();
+        sc.takeEntry(this);
+
         FXMLLoader mainLoader = new FXMLLoader();
         mainLoader.setLocation(getClass().getResource("/fxml/main-frame.fxml"));
         mainScene = new Scene(mainLoader.load());
         MainController mc = mainLoader.getController();
         mc.takeEntry(this);
-        mc.initVisual();
+        mc.initView();
 
         FXMLLoader resultLoader = new FXMLLoader();
         resultLoader.setLocation(getClass().getResource("/fxml/result-frame.fxml"));
@@ -31,8 +38,8 @@ public class App extends Application {
         ResultController rc = resultLoader.getController();
         rc.takeEntry(this);
 
-        primaryStage.setScene(mainScene);
-        primaryStage.setTitle("Input window");
+        primaryStage.setScene(starterScene);
+        primaryStage.setTitle("IR system");
 
         // bind list of answers from main controller to the list view in
         rc.bindList(mc.getModel());

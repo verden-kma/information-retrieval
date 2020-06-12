@@ -1,4 +1,4 @@
-package ukma.ir.index.helpers;
+package ukma.ir.index.helpers.utils;
 
 import java.io.IOException;
 import java.io.InputStream;
