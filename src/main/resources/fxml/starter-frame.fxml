@@ -2,14 +2,15 @@
 
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.AnchorPane?>
+<?import javafx.scene.layout.BorderPane?>
 <?import javafx.scene.text.Font?>
-<AnchorPane prefHeight="400.0" prefWidth="600.0" xmlns="http://javafx.com/javafx/11.0.1" xmlns:fx="http://javafx.com/fxml/1" fx:controller="ukma.ir.controllers.StarterController">
+<AnchorPane maxHeight="400.0" maxWidth="600.0" minHeight="400.0" minWidth="600.0" prefHeight="400.0" prefWidth="600.0" xmlns="http://javafx.com/javafx" xmlns:fx="http://javafx.com/fxml" fx:controller="ukma.ir.controllers.StarterController">
    <children>
-      <TextField fx:id="pathPicker" layoutX="189.0" layoutY="169.0" prefHeight="30.0" prefWidth="221.0" promptText="enter your absolute path here">
+      <TextField fx:id="pathPicker" layoutX="180.0" layoutY="170.0" prefHeight="30.0" prefWidth="240.0" promptText="enter your absolute path here">
          <font>
             <Font size="14.0" />
          </font></TextField>
-      <Button layoutX="220.0" layoutY="229.0" mnemonicParsing="false" onAction="#buildIndex" text="build">
+      <Button fx:id="buildBtn" layoutX="220.0" layoutY="230.0" mnemonicParsing="false" onAction="#buildIndex" text="build">
          <font>
             <Font size="14.0" />
          </font>
@@ -17,7 +18,7 @@
             <Tooltip text="build a new index from scratch" />
          </tooltip>
       </Button>
-      <Button layoutX="329.0" layoutY="229.0" mnemonicParsing="false" onAction="#loadIndex" text="load">
+      <Button fx:id="loadBtn" layoutX="320.0" layoutY="230.0" mnemonicParsing="false" onAction="#loadIndex" text="load">
          <font>
             <Font size="14.0" />
          </font>
@@ -25,10 +26,11 @@
             <Tooltip text="try to load index, if there is any, build otherwise" />
          </tooltip>
       </Button>
-      <Label layoutX="199.0" layoutY="113.0" text="Path to collection folder">
+      <Label layoutX="198.0" layoutY="115.0" text="Path to collection folder">
          <font>
             <Font size="18.0" />
          </font>
       </Label>
+      <BorderPane fx:id="spinnerPane" disable="true" layoutX="150.0" layoutY="50.0" opacity="0.7" prefHeight="300.0" prefWidth="300.0" />
    </children>
 </AnchorPane>

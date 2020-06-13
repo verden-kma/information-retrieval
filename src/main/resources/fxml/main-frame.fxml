@@ -5,7 +5,7 @@
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.AnchorPane?>
 <?import javafx.scene.text.Font?>
-<AnchorPane prefHeight="400.0" prefWidth="600.0" xmlns="http://javafx.com/javafx/11.0.1" xmlns:fx="http://javafx.com/fxml/1" fx:controller="ukma.ir.controllers.MainController">
+<AnchorPane prefHeight="400.0" prefWidth="600.0" xmlns="http://javafx.com/javafx" xmlns:fx="http://javafx.com/fxml" fx:controller="ukma.ir.controllers.MainController">
    <children>
       <Button layoutX="266.0" layoutY="300.0" mnemonicParsing="false" onAction="#search" prefHeight="26.0" prefWidth="63.0" text="search" />
       <Label layoutX="212.0" layoutY="107.0" text="Enter your query">

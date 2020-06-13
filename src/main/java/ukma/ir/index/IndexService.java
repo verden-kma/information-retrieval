@@ -90,7 +90,7 @@ public class IndexService {
                 Map<Integer, DocVector[]> clusters = CacheManager.loadCache(CacheManager.Fields.CLUSTERS);
                 BiMap<String, Integer> docId = CacheManager.loadCache(CacheManager.Fields.PATH_DOC_ID_MAP);
                 return instance = new IndexService(index, docVectors, clusters, docId);
-            } catch (Exception e) {
+            } catch(IOException | ClassNotFoundException e) {
                 throw new CacheException("Cache data has been corrupted.", e);
             }
         }

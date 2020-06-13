@@ -3,6 +3,7 @@ package ukma.ir;
 import javafx.application.Application;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
+import javafx.scene.image.Image;
 import javafx.stage.Stage;
 import ukma.ir.controllers.MainController;
 import ukma.ir.controllers.ResultController;
@@ -43,6 +44,7 @@ public class App extends Application {
 
         // bind list of answers from main controller to the list view in
         rc.bindList(mc.getModel());
+        primaryStage.getIcons().add(new Image(getClass().getResource("/icons/app-icon.png").toString()));
         primaryStage.show();
     }
 
