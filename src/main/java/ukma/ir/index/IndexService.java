@@ -190,7 +190,6 @@ public class IndexService {
             System.out.println("build clusters, time: " + getTime());
             clusters = Clusterizer.buildClusters(docVectors);
         } catch (Exception e) {
-            // TODO: handle out of memory, prompt to user
             e.printStackTrace();
         }
         long endTime = System.nanoTime();

@@ -3,6 +3,8 @@ package ukma.ir.controllers;
 
 import de.jensd.fx.glyphs.GlyphsDude;
 import de.jensd.fx.glyphs.fontawesome.FontAwesomeIcon;
+import javafx.animation.Animation;
+import javafx.animation.RotateTransition;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
@@ -11,6 +13,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.text.Text;
+import javafx.util.Duration;
 import ukma.ir.App;
 import ukma.ir.QueryProcessor;
 import ukma.ir.index.IndexService;
@@ -24,6 +27,7 @@ import java.nio.file.Paths;
 public class StarterController {
     private App entry;
 
+    private RotateTransition spinner;
 
     @FXML
     private TextField pathPicker;
@@ -74,7 +78,9 @@ public class StarterController {
         });
 
         toggleSpinner();
-        new Thread(indexTask).start();
+        Thread exec = new Thread(indexTask);
+        exec.setDaemon(true);
+        exec.start();
     }
 
     @FXML
@@ -105,7 +111,9 @@ public class StarterController {
         });
 
         toggleSpinner();
-        new Thread(indexTask).start();
+        Thread exec = new Thread(indexTask);
+        exec.setDaemon(true);
+        exec.start();
     }
 
     public void takeEntry(App app) {
@@ -113,17 +121,22 @@ public class StarterController {
         Text testIcon = GlyphsDude.createIcon(FontAwesomeIcon.SPINNER, "300px");
         spinnerPane.setBottom(testIcon);
         spinnerPane.setVisible(false);
+        spinner = new RotateTransition(Duration.seconds(2), testIcon);
+        spinner.setCycleCount(Animation.INDEFINITE);
+        spinner.setByAngle(360);
     }
 
     private void toggleSpinner() {
         if (spinnerPane.isDisabled()) {
             spinnerPane.disableProperty().set(false);
+            spinner.play();
             spinnerPane.setVisible(true);
             pathPicker.disableProperty().set(true);
             buildBtn.disableProperty().set(true);
             loadBtn.disableProperty().set(true);
         } else {
             spinnerPane.setVisible(false);
+            spinner.pause();
             spinnerPane.disableProperty().set(true);
             pathPicker.disableProperty().set(false);
             buildBtn.disableProperty().set(false);
