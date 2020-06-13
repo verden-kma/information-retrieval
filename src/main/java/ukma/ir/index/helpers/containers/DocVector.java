@@ -2,8 +2,11 @@ package ukma.ir.index.helpers.containers;
 
 
 import javafx.scene.control.Alert;
+import ukma.ir.index.IndexService;
 
 import java.io.*;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Map;
 
 public class DocVector implements Serializable {
@@ -11,14 +14,14 @@ public class DocVector implements Serializable {
     private static final long serialVersionUID = 2944980064668576062L;
 
     static {
-        // no time for AppData path
-        String path = "data/doc_vectors";
-        File dirs = new File(path);
-        if (!dirs.exists())
-            dirs.mkdirs();
+        Path docVecPath = Paths.get(IndexService.APP_DATA_PATH, "data/doc_vectors");
+        File docVecDirs = docVecPath.toFile();
+        if (!docVecDirs.exists())
+            docVecDirs.mkdirs();
     }
 
-    private final static String PATH_TEMPLATE = ("data/doc_vectors/vec%d.bin");
+    private final static String PATH_TEMPLATE = Paths.get(IndexService.APP_DATA_PATH,
+            "data/doc_vectors/vec%d.bin").toString();
     private final int ordinal;
     private final String filePath;
     private transient RandomAccessFile bridge;
@@ -94,7 +97,7 @@ public class DocVector implements Serializable {
                     vDis.skipBytes(Float.BYTES);
                     vIndex = vDis.readInt();
                     j++;
-                } else { // if (index < vIndex)
+                } else { // if index < vIndex
                     dis.skipBytes(Float.BYTES);
                     index = dis.readInt();
                     i++;

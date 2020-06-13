@@ -30,22 +30,34 @@ TODO: <term> [docFr] [(docID TermFr)_0 ... (docID TermFr)_n-1] [(coord_0 ... coo
 public class IndexService {
 
     static {
-        // no time for AppData path
-        String path = "data/dictionary";
-        File dirs = new File(path);
-        dirs.mkdirs();
+        String rootPath;
+        String osName = System.getenv("AppData").toUpperCase();
+        if (osName.contains("WIN")) {
+            rootPath = Paths.get(System.getenv("user.home"), "info-search").toString();
+        } else if (osName.contains("MAC")) {
+            rootPath = System.getProperty("user.home") + "/Library/Application Support/info-search";
+        } else {
+            rootPath = Paths.get(System.getProperty("user.home"), "info-search").toString();
+        }
+        APP_DATA_PATH = rootPath;
+        TEMP_PARTICLES = Paths.get(rootPath, "data/dictionary/dp%d.txt").toString();
+        INDEX_FLECKS = Paths.get(rootPath, "data/dictionary/indexFleck_%d.txt").toString();
+        Path dictionaryPath = Paths.get(rootPath, "data/dictionary");
+        File dirs = dictionaryPath.toFile();
+        if (!dirs.exists()) dirs.mkdirs();
     }
 
+    public static final String APP_DATA_PATH;
+    private static final String TEMP_PARTICLES;// = "data/dictionary/dp%d.txt";
+    private static final String INDEX_FLECKS;// = "data/dictionary/indexFleck_%d.txt";
     private static final int WORKERS = Runtime.getRuntime().availableProcessors();
-    private static final String TEMP_PARTICLES = "data/dictionary/dp%d.txt";
-    private static final String INDEX_FLECKS = "data/dictionary/indexFleck_%d.txt";
     private static final long WORKERS_MEMORY_LIMIT = Math.round(Runtime.getRuntime().maxMemory() * 0.5);
     private static final long MAX_MEMORY_LOAD = Math.round(Runtime.getRuntime().maxMemory() * 0.7);
     private static final char NEXT_DOC_SEP = ':'; // TERM_DOC
     private static final char DOC_COORD_SEP = '>'; // DOC_COORDINATE
     private static final char COORD_SEP = ' ';
     private static final char TF_SEP = '#'; // TERM_FREQUENCY
-    private Path library;// = Paths.get("G:/project/library/custom"); // default path
+    private Path library;
 
     private final BiMap<String, Integer> docId; // path - docId
     // term - id of the corresponding index file
@@ -56,7 +68,7 @@ public class IndexService {
     private Map<Integer, DocVector[]> clusters;
 
     // building-time variables
-    private int numStoredDictionaries;
+    private int numStoredParticles;
     private final CountDownLatch completion = new CountDownLatch(WORKERS);
     // hash function is effective for Integer
     // <term, Hash<docID, positions>> size of map == df, size of positions == tf
@@ -90,7 +102,7 @@ public class IndexService {
                 Map<Integer, DocVector[]> clusters = CacheManager.loadCache(CacheManager.Fields.CLUSTERS);
                 BiMap<String, Integer> docId = CacheManager.loadCache(CacheManager.Fields.PATH_DOC_ID_MAP);
                 return instance = new IndexService(index, docVectors, clusters, docId);
-            } catch(IOException | ClassNotFoundException e) {
+            } catch (IOException | ClassNotFoundException e) {
                 throw new CacheException("Cache data has been corrupted.", e);
             }
         }
@@ -319,7 +331,7 @@ public class IndexService {
 //    }
 
     private void saveParticles() {
-        String pathNameDict = String.format(TEMP_PARTICLES, numStoredDictionaries++);
+        String pathNameDict = String.format(TEMP_PARTICLES, numStoredParticles++);
         try (BufferedWriter bw = new BufferedWriter(new FileWriter(new File(pathNameDict)))) {
             for (Map.Entry<String, HashMap<Integer, ArrayList<Integer>>> entry : dictionary.entrySet()) {
                 bw.write(entry.getKey());
@@ -483,7 +495,7 @@ public class IndexService {
 
     private PriorityQueue<PTP> initPTP() throws IOException {
         PriorityQueue<PTP> ptpPQ = new PriorityQueue<>(PTP.getComparator(PTP.State.TERM));
-        for (int i = 0; i < numStoredDictionaries; i++) {
+        for (int i = 0; i < numStoredParticles; i++) {
             PTP nextPTP = new PTP(new File(String.format(TEMP_PARTICLES, i)));
             nextPTP.getNext(); // change state to DOC_FR and set cTerm
             ptpPQ.add(nextPTP);
@@ -498,9 +510,10 @@ public class IndexService {
             TERM, DOC_ID, TERM_FR, POSITION, EOF
         }
 
-        private static final boolean isWindows = System.lineSeparator().length() != 1;
+        private static final boolean IS_WINDOWS = System.lineSeparator().length() != 1;
         private final StringBuilder builder = new StringBuilder();
         private final BufferedReader br;
+        private final Path path;
         private State currentState;
         private String cTerm;
         private String nextTerm;
@@ -510,6 +523,7 @@ public class IndexService {
 
         PTP(File particle) throws IOException {
             br = new BufferedReader(new FileReader(particle));
+            path = particle.toPath();
             currentState = State.TERM;
         }
 
@@ -569,11 +583,14 @@ public class IndexService {
             }
             builder.setLength(0);
             if (nextChar == System.lineSeparator().charAt(0)) {
-                if (isWindows) br.skip(1);
+                if (IS_WINDOWS) br.skip(1);
                 // suspect EOF, if not EOF then save next term and change state to BOOLEAN
                 // read saved term with next invocation
                 currentState = State.EOF;
-                if (fill() == null) br.close();
+                if (fill() == null) {
+                    br.close();
+                    Files.delete(path);
+                }
                 else currentState = State.TERM;
             }
             return this;
@@ -620,7 +637,6 @@ public class IndexService {
             return cTermFr;
         }
     }
-
 
     private class TermProvider {
         private BufferedReader br;

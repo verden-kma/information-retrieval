@@ -1,6 +1,7 @@
 package ukma.ir.index.helpers;
 
 import com.google.common.collect.BiMap;
+import ukma.ir.index.IndexService;
 import ukma.ir.index.helpers.containers.DocVector;
 
 import java.io.*;
@@ -10,17 +11,16 @@ import java.nio.file.Paths;
 import java.util.Map;
 
 public class CacheManager {
-    private static final Path DOC_ID_PATH = Paths.get("data/cache/docIdMap.bin");
-    private static final Path INDEX_PATH = Paths.get("data/cache/index.bin");
-    private static final Path VECTORS_PATH = Paths.get("data/cache/vectors.bin");
-    private static final Path CLUSTERS_PATH = Paths.get("data/cache/clusters.bin");
+    private static final Path DOC_ID_PATH = Paths.get(IndexService.APP_DATA_PATH,"data/cache/docIdMap.bin");
+    private static final Path INDEX_PATH = Paths.get(IndexService.APP_DATA_PATH,"data/cache/index.bin");
+    private static final Path VECTORS_PATH = Paths.get(IndexService.APP_DATA_PATH,"data/cache/vectors.bin");
+    private static final Path CLUSTERS_PATH = Paths.get(IndexService.APP_DATA_PATH,"data/cache/clusters.bin");
 
     static {
-        // no time for AppData path
-        String path = "data/cache";
-        File dirs = new File(path);
-        if (!dirs.exists())
-            dirs.mkdirs();
+        Path cachePath = Paths.get(IndexService.APP_DATA_PATH, "data/cache");
+        File cacheDir = cachePath.toFile();
+        if (!cacheDir.exists())
+            cacheDir.mkdirs();
     }
 
     public enum Fields {
