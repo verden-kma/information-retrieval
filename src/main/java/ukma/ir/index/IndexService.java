@@ -266,7 +266,6 @@ public class IndexService {
         public void run() {
             Morphology morph = new Morphology();
             Map<String, ArrayList<Integer>> vocabulary;
-            //List<OutEntry> outers = new ArrayList<>();
             for (File docFile : files) {
                 vocabulary = new TreeMap<>(); // term - positions in current doc, tf of a term == length of the list
                 int docID = docId.get(docFile.toString());
@@ -282,13 +281,9 @@ public class IndexService {
                     if (rt.maxMemory() - rt.freeMemory() > WORKER_MEMORY) {
                         mergeOut(new OutEntry(docID, vocabulary.entrySet()));
                         vocabulary = new TreeMap<>();
-                        //outers.add(new OutEntry(docID, vocabulary.entrySet()));
-                        //mergeOut(outers);
-                        //outers = new ArrayList<>();
                     }
                 }
                 mergeOut(new OutEntry(docID, vocabulary.entrySet()));
-                //outers.add(new OutEntry(docID, vocabulary.entrySet()));
             }
             System.out.println("task completed, total: " + files.length + " time: " + getTime());
             completion.countDown();
@@ -312,23 +307,6 @@ public class IndexService {
         Runtime rt = Runtime.getRuntime();
         if (rt.maxMemory() - rt.freeMemory() > MAX_MEMORY_LOAD) saveParticles();
     }
-//    /**
-//     * IMPORTANT IDEA, DO NOT DELETE!!!
-//     * merges small local dictionaries into a big global
-//     *
-//     * @param microMaps - list of particle of dictionary built during a processing period
-//     */
-//    private synchronized void mergeOut(List<OutEntry> microMaps) {
-//        while (!microMaps.isEmpty()) {
-//            OutEntry out = microMaps.get(microMaps.size() - 1);
-//            replenishDictionary(dictionary, out.getVocabulary(), out.getDocId());
-//            microMaps.remove(microMaps.size() - 1); // clear unnecessary memory
-//            Runtime rt = Runtime.getRuntime();
-//            if (rt.maxMemory() - rt.freeMemory() > MAX_MEMORY_LOAD) {
-//                saveParticles();
-//            }
-//        }
-//    }
 
     private void saveParticles() {
         String pathNameDict = String.format(TEMP_PARTICLES, numStoredParticles++);
@@ -590,8 +568,7 @@ public class IndexService {
                 if (fill() == null) {
                     br.close();
                     Files.delete(path);
-                }
-                else currentState = State.TERM;
+                } else currentState = State.TERM;
             }
             return this;
         }

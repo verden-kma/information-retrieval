@@ -47,7 +47,6 @@ public class QueryProcessor {
      * @param q - trimmed query to be processed
      * @return list of documents that match a given query
      */
-    //todo: make a better regex validation
     public List<String> processBooleanQuery(String q) {
         if (!q.matches("\\s*\\w[\\w\\s]*")) throw new IllegalArgumentException("incorrect input");
 //        if (!q.matches("^\\s*(NOT)?\\s+\\w+?\\s*((AND(\\s+NOT)?|OR)\\s+\\w+?\\s*)*$")) throw new IllegalArgumentException("incorrect input");
@@ -268,36 +267,4 @@ public class QueryProcessor {
             result.add(indexService.getDocName(docID));
         return result;
     }
-
-//    private List<Integer> intersect(Integer[] basePost, Integer[] post) {
-//        List<Integer> res = new ArrayList<>();
-//        int baseLeap = (int) Math.sqrt(basePost.length);
-//        int newLeap = (int) Math.sqrt(post.length);
-//
-//        int baseIndex = 0;
-//        int anotherIndex = 0;
-//        while (baseIndex < basePost.length && anotherIndex < post.length) {
-//            if (basePost[baseIndex].equals(post[anotherIndex])) {
-//                res.add(basePost[baseIndex++]);
-//                anotherIndex++;
-//            } else if (basePost[baseIndex].compareTo(post[anotherIndex]) > 0) {
-//                int skippedIndex = anotherIndex + newLeap;
-//                if (skippedIndex < post.length && basePost[baseIndex].compareTo(post[skippedIndex]) >= 0)
-//                    do {
-//                        anotherIndex = skippedIndex;
-//                        skippedIndex += newLeap;
-//                    } while (skippedIndex < post.length && basePost[baseIndex].compareTo(post[skippedIndex]) >= 0);
-//                else anotherIndex++;
-//            } else {
-//                int skippedIndex = baseIndex + baseLeap;
-//                if (skippedIndex < basePost.length && basePost[skippedIndex].compareTo(post[anotherIndex]) <= 0)
-//                    do {
-//                        baseIndex = skippedIndex;
-//                        skippedIndex += baseLeap;
-//                    } while (skippedIndex < basePost.length && basePost[skippedIndex].compareTo(post[anotherIndex]) <= 0);
-//                else anotherIndex++;
-//            }
-//        }
-//        return res;
-//    }
 }

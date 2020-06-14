@@ -15,7 +15,7 @@ public class Clusterizer {
         //for each leader walk through all docVectors and associate with each leader the followers that are most similar to it
         for (int currLead : leaderFollowers.keySet()) {
             for (int flr = 0; flr < docVectors.length; flr++) {
-                if (leaderFollowers.containsKey(flr)) continue;
+                if (leaderFollowers.containsKey(flr)) continue; // if current follower happens to be actually a leader
 
                 double sim = docVectors[currLead].cosineSimilarity(docVectors[flr]);
                 int followerInd = flr - flr / step - 1; // 0th doc is decided to be leader, therefore -1
@@ -38,9 +38,9 @@ public class Clusterizer {
             clusters.put(leaderStat.getKey(), new DocVector[leaderStat.getValue()]);
         }
 
-        List<Integer> individuals = new LinkedList<>();
+        List<Integer> individuals = new ArrayList<>();
         Set<Integer> leaders = leaderFollowers.keySet();
-        HashMap<Integer, Integer> leaderIndices = leaderFollowers; // Leader - Index; different name - different perception(aim)
+        HashMap<Integer, Integer> leaderIndices = leaderFollowers; // save up on creation of a new array, aka std::move
         for (Integer leader : leaders) {
             leaderIndices.put(leader, 0);
         }
@@ -67,8 +67,14 @@ public class Clusterizer {
         return leaders;
     }
 
-    // TODO: implement pivoted doc len normalization instead of cosine similarity
-    public static DocVector[] buildDocVectors(int documents, IndexBody index) {
+    /**
+     * builds document vectors for further clusterization
+     *
+     * @param documents - number of all document in the collection
+     * @param index     - index data provider
+     * @return array of <code>DocVector</code> with computed tf-idf
+     */
+    public static DocVector[] buildDocVectors(final int documents, IndexBody index) {
         DocVector[] docVectors = new DocVector[documents];
         for (int i = 0; i < docVectors.length; i++)
             docVectors[i] = new DocVector(i);
