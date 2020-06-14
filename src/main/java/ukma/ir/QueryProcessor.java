@@ -2,12 +2,10 @@ package ukma.ir;
 
 import ukma.ir.index.IndexService;
 import ukma.ir.index.helpers.containers.CoordVector;
-import ukma.ir.index.helpers.containers.DocVector;
 
 import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public class QueryProcessor {
     private static final Object locker = new Object();
@@ -247,23 +245,6 @@ public class QueryProcessor {
         }
         List<String> result = new ArrayList<>();
         for (Integer docID : validFiles)
-            result.add(indexService.getDocName(docID));
-        return result;
-    }
-
-    public List<String> processClusterQuery(String q) {
-        if (!q.matches("[\\w\\s]+")) throw new IllegalArgumentException("wrong query pattern");
-        String[] query = Stream.of(q.split("\\s+"))
-                .map(IndexService::normalize)
-                .filter(Objects::nonNull)
-                .toArray(String[]::new);
-        if (query.length == 0) throw new IllegalArgumentException("invalid words");
-
-        DocVector queryVector = indexService.buildQueryVector(query);
-        List<Integer> docIDs = indexService.getCluster(queryVector);
-        if (docIDs == null) return new ArrayList<>(0);
-        List<String> result = new ArrayList<>(docIDs.size());
-        for (Integer docID : docIDs)
             result.add(indexService.getDocName(docID));
         return result;
     }

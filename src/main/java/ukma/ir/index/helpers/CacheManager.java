@@ -2,19 +2,16 @@ package ukma.ir.index.helpers;
 
 import com.google.common.collect.BiMap;
 import ukma.ir.index.IndexService;
-import ukma.ir.index.helpers.containers.DocVector;
 
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Map;
 
 public class CacheManager {
     private static final Path DOC_ID_PATH = Paths.get(IndexService.APP_DATA_PATH, "data/cache/docIdMap.bin");
     private static final Path INDEX_PATH = Paths.get(IndexService.APP_DATA_PATH, "data/cache/index.bin");
     private static final Path VECTORS_PATH = Paths.get(IndexService.APP_DATA_PATH, "data/cache/vectors.bin");
-    private static final Path CLUSTERS_PATH = Paths.get(IndexService.APP_DATA_PATH, "data/cache/clusters.bin");
 
     static {
         Path cachePath = Paths.get(IndexService.APP_DATA_PATH, "data/cache");
@@ -25,17 +22,15 @@ public class CacheManager {
 
     public enum Fields {
         PATH_DOC_ID_MAP,
-        INDEX,
-        DOC_VECTORS,
-        CLUSTERS
+        INDEX
     }
 
     public static boolean filesPresent() {
         return DOC_ID_PATH.toFile().exists() && INDEX_PATH.toFile().exists()
-                && VECTORS_PATH.toFile().exists() && CLUSTERS_PATH.toFile().exists();
+                && VECTORS_PATH.toFile().exists();
     }
 
-    public static void saveCache(BiMap<String, Integer> docId, IndexBody index, DocVector[] docVectors, Map<Integer, DocVector[]> clusters) {
+    public static void saveCache(BiMap<String, Integer> docId, IndexBody index) {
         try {
             FileOutputStream fos = new FileOutputStream(DOC_ID_PATH.toFile());
             ObjectOutputStream oos = new ObjectOutputStream(fos);
@@ -45,16 +40,6 @@ public class CacheManager {
             fos = new FileOutputStream(INDEX_PATH.toFile());
             oos = new ObjectOutputStream(fos);
             oos.writeObject(index);
-            oos.close();
-
-            fos = new FileOutputStream(VECTORS_PATH.toFile());
-            oos = new ObjectOutputStream(fos);
-            oos.writeObject(docVectors);
-            oos.close();
-
-            fos = new FileOutputStream(CLUSTERS_PATH.toFile());
-            oos = new ObjectOutputStream(fos);
-            oos.writeObject(clusters);
             oos.close();
         } catch (IOException e) {
             e.printStackTrace();
@@ -71,12 +56,6 @@ public class CacheManager {
             case PATH_DOC_ID_MAP:
                 fis = new FileInputStream(DOC_ID_PATH.toFile());
                 break;
-            case DOC_VECTORS:
-                fis = new FileInputStream(VECTORS_PATH.toFile());
-                break;
-            case CLUSTERS:
-                fis = new FileInputStream(CLUSTERS_PATH.toFile());
-                break;
         }
         ObjectInputStream ois = new ObjectInputStream(fis);
         T res = (T) ois.readObject();
@@ -89,7 +68,6 @@ public class CacheManager {
             Files.deleteIfExists(INDEX_PATH);
             Files.deleteIfExists(DOC_ID_PATH);
             Files.deleteIfExists(VECTORS_PATH);
-            Files.deleteIfExists(CLUSTERS_PATH);
         } catch (IOException e) {
             e.printStackTrace();
         }

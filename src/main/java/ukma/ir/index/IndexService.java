@@ -3,9 +3,11 @@ package ukma.ir.index;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import edu.stanford.nlp.process.Morphology;
-import ukma.ir.index.helpers.*;
+import ukma.ir.index.helpers.CacheException;
+import ukma.ir.index.helpers.CacheManager;
+import ukma.ir.index.helpers.IndexBody;
+import ukma.ir.index.helpers.IndexNotBuiltException;
 import ukma.ir.index.helpers.containers.CoordVector;
-import ukma.ir.index.helpers.containers.DocVector;
 import ukma.ir.index.helpers.containers.TermData;
 
 import javax.annotation.Nullable;
@@ -19,12 +21,6 @@ import java.util.stream.Stream;
 
 import static java.lang.String.valueOf;
 import static ukma.ir.index.helpers.utils.VLC.writeVLC;
-
-/*
-TODO: <term> [docFr] [(docID TermFr)_0 ... (docID TermFr)_n-1] [(coord_0 ... coord_i-1)_0 ... (coord_0 ... coord_j-1)_n-1]
-                ||              ||                   ||
-                 n               i                    j
-*/
 
 // -Xms5G -Xmx5G -XX:+UseG1GC -XX:+UseStringDeduplication
 public class IndexService {
@@ -64,8 +60,6 @@ public class IndexService {
     private IndexBody index;
     private static volatile IndexService instance; // effectively final once initialized
     private static final Morphology MORPH = new Morphology();
-    private DocVector[] docVectors;
-    private Map<Integer, DocVector[]> clusters;
 
     // building-time variables
     private int numStoredParticles;
@@ -80,10 +74,8 @@ public class IndexService {
         return (System.currentTimeMillis() - startTime) / 1000;
     }
 
-    private IndexService(IndexBody index, DocVector[] docVectors, Map<Integer, DocVector[]> clusters, BiMap<String, Integer> docId) {
+    private IndexService(IndexBody index, BiMap<String, Integer> docId) {
         this.index = index;
-        this.docVectors = docVectors;
-        this.clusters = clusters;
         this.docId = docId;
     }
 
@@ -98,10 +90,8 @@ public class IndexService {
             if (!CacheManager.filesPresent()) throw new CacheException("Cache file(s) missing.");
             try {
                 IndexBody index = CacheManager.loadCache(CacheManager.Fields.INDEX);
-                DocVector[] docVectors = CacheManager.loadCache(CacheManager.Fields.DOC_VECTORS);
-                Map<Integer, DocVector[]> clusters = CacheManager.loadCache(CacheManager.Fields.CLUSTERS);
                 BiMap<String, Integer> docId = CacheManager.loadCache(CacheManager.Fields.PATH_DOC_ID_MAP);
-                return instance = new IndexService(index, docVectors, clusters, docId);
+                return instance = new IndexService(index, docId);
             } catch (IOException | ClassNotFoundException e) {
                 throw new CacheException("Cache data has been corrupted.", e);
             }
@@ -131,7 +121,7 @@ public class IndexService {
 
     // for GUI
     public enum IndexType {
-        BOOLEAN, COORDINATE, JOKER/*, CLUSTER*/
+        BOOLEAN, COORDINATE, JOKER
     }
 
     public boolean containsElement(String term) {
@@ -197,55 +187,12 @@ public class IndexService {
             System.out.println("start transferMerge: " + getTime());
             transferMerge(avWordsNum);
             showFreeMemory();
-            System.out.println("build vectors: " + getTime());
-            docVectors = Clusterizer.buildDocVectors(documents.length, index);
-            System.out.println("build clusters, time: " + getTime());
-            clusters = Clusterizer.buildClusters(docVectors);
         } catch (Exception e) {
             e.printStackTrace();
         }
         long endTime = System.nanoTime();
         System.out.println("Total time: " + (endTime - startTime) / 1e9);
-        CacheManager.saveCache(docId, index, docVectors, clusters);
-    }
-
-    public DocVector buildQueryVector(String[] query) {
-        // use map of term - quantity (tf for query)
-        Map<Integer, Double> queryData = new HashMap<>(query.length);
-        for (int i = 0; i < query.length; i++) {
-            String term = query[i];
-            CoordVector[] termData = index.getTermData(term);
-            if (termData == null) continue; // if not from vocabulary then skip
-            queryData.put(index.getTermDictPos(term), Math.log((double) docVectors.length / (termData[0].length)));
-        }
-        return new DocVector(queryData);
-    }
-
-    public List<Integer> getCluster(DocVector inDoc) {
-        int closestLeader = -1;
-        double sim = 0;
-        for (Integer nextLeader : clusters.keySet()) {
-            double nextSim = docVectors[nextLeader].cosineSimilarity(inDoc);
-            if (nextSim > sim) {
-                closestLeader = nextLeader;
-                sim = nextSim;
-            }
-        }
-
-        if (closestLeader == -1) return null;
-        TreeMap<Double, Integer> sortedCluster = new TreeMap<>();
-        sortedCluster.put(sim, closestLeader);
-        DocVector[] followers = clusters.get(closestLeader);
-        if (followers != null)
-            for (DocVector vec : followers) {
-                double flrSim = vec.cosineSimilarity(inDoc);
-                sortedCluster.put(flrSim, vec.getOrdinal());
-            }
-        List<Integer> result = new ArrayList<>(sortedCluster.size());
-        for (Map.Entry<Double, Integer> entry : sortedCluster.entrySet())
-            result.add(entry.getValue());
-
-        return result;
+        CacheManager.saveCache(docId, index);
     }
 
     private void showFreeMemory() {
